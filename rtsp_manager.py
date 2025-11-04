@@ -17,14 +17,9 @@ _processes = {}  # stream_id -> Popen
 _lock = Lock()
 
 def _stream_id_from_url(url):
-    # Tee lyhyt id url:stä
     return hashlib.md5(url.encode('utf-8')).hexdigest()[:12]
 
 def start_rtsp_to_hls(rtsp_url, force_restart=False):
-    """
-    Käynnistä FFmpeg-prosessi joka muuntaa rtsp_url -> HLS hakemistoon.
-    Palauttaa dict: {'stream_id': id, 'playlist': '/static/hls/<id>/index.m3u8'}
-    """
     stream_id = _stream_id_from_url(rtsp_url)
     target_dir = os.path.join(HLS_BASE, stream_id)
     os.makedirs(target_dir, exist_ok=True)
@@ -41,17 +36,14 @@ def start_rtsp_to_hls(rtsp_url, force_restart=False):
             else:
                 return {'stream_id': stream_id, 'playlist': f'/static/hls/{stream_id}/index.m3u8', 'status': 'running'}
 
-        # FFmpeg-komento: ota RTSP, tee HLS-segmenttejä
-        # Asetukset: kiinteä segmentti- ja playlist-pituus, overwrite
         ffmpeg_cmd = (
-            f"ffmpeg -rtsp_transport tcp -i {shlex.quote(rtsp_url)} "
-            f"-c:v copy -c:a aac -f hls "
-            f"-hls_time 2 -hls_list_size 6 -hls_flags delete_segments+append_list "
-            f"-hls_allow_cache 0 "
-            f"{shlex.quote(os.path.join(target_dir, 'index.m3u8'))}"
+            f"ffmpeg -rtsp_transport tcp -i {shlex.quote(rtsp_url)} \
+            -c:v copy -c:a aac -f hls \
+            -hls_time 2 -hls_list_size 6 -hls_flags delete_segments+append_list \
+            -hls_allow_cache 0 \
+            {shlex.quote(os.path.join(target_dir, 'index.m3u8'))}"
         )
 
-        # Käynnistä prosessi taustalle
         proc = subprocess.Popen(ffmpeg_cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         _processes[stream_id] = proc
 

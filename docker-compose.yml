@@ -14,8 +14,6 @@ services:
       - LINK_MODE=symlink   # vaihtoehdot: symlink, hardlink, copy
     restart: unless-stopped
 
-  # SFTP-palvelin, johon kamera voi lähettää kuvia.
-  # Luodaan käyttäjä 'camera' salasanalla 'password' (vaihda tuotannossa)
   sftp:
     image: atmoz/sftp:latest
     ports:
