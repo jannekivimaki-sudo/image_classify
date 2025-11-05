@@ -6,6 +6,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
+      - ./:/app
       - ./data/source:/data/source
       - ./data/classified:/data/classified
       - ./data/static:/data/static

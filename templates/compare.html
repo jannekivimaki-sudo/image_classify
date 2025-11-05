@@ -1,0 +1,369 @@
+
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kuvavertailu</title>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg,#667eea 0%,#764ba2 100%); min-height:100vh; padding:20px; }
+        .container { max-width:1600px; margin:0 auto; background:white; border-radius:15px; box-shadow:0 20px 40px rgba(0,0,0,0.1); overflow:hidden; }
+        .header { background: linear-gradient(135deg,#2c3e50 0%,#3498db 100%); color:white; padding:30px; text-align:center; }
+        .header h1 { font-size:2.5em; margin-bottom:10px; }
+        .comparison-section { padding:30px; }
+        .time-selection { display:grid; grid-template-columns:1fr 1fr; gap:30px; margin-bottom:30px; }
+        .time-group { background:#f8f9fa; padding:20px; border-radius:10px; border:2px solid #e9ecef; }
+        .form-group { display:flex; flex-direction:column; margin-bottom:15px; }
+        label { font-weight:600; margin-bottom:5px; color:#495057; }
+        input, select, button { padding:12px 15px; border:2px solid #e9ecef; border-radius:8px; font-size:16px; transition:all 0.3s ease; }
+        button { background: linear-gradient(135deg,#3498db 0%,#2980b9 100%); color:white; border:none; cursor:pointer; font-weight:600; }
+        .image-selectors { display:grid; grid-template-columns:1fr 1fr; gap:30px; margin-bottom:30px; }
+        .selector { background:#f8f9fa; padding:20px; border-radius:10px; }
+        .image-preview { width:100%; height:300px; background:#e9ecef; border-radius:8px; margin-bottom:15px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+        .image-preview img { max-width:100%; max-height:100%; object-fit:contain; }
+        .image-scroller { display:flex; align-items:center; gap:10px; margin:10px 0; }
+        .scroll-btn { padding:10px; background:#6c757d; color:white; border:none; border-radius:5px; cursor:pointer; }
+        .image-counter { text-align:center; font-weight:bold; color:#495057; }
+        .image-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; margin-top:15px; max-height:200px; overflow-y:auto; }
+        .grid-image { width:100%; height:80px; object-fit:cover; border-radius:6px; cursor:pointer; transition:all 0.3s ease; }
+        .grid-image:hover { transform:scale(1.05); box-shadow:0 5px 15px rgba(0,0,0,0.3); }
+        .selected { border:3px solid #3498db; box-shadow:0 0 0 3px rgba(52,152,219,0.3); }
+        .comparison-container { position:relative; width:100%; height:600px; background:#000; border-radius:12px; overflow:hidden; margin-bottom:20px; }
+        .comparison-image { position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; }
+        .image-before { z-index:1; }
+        .image-after { z-index:2; clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%); }
+        .slider-container { position:absolute; top:0; left:0; width:100%; height:100%; z-index:3; }
+        .slider { position:absolute; top:0; left:50%; transform:translateX(-50%); width:4px; height:100%; background:#3498db; cursor:ew-resize; }
+        .slider-handle { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:50px; height:50px; background:#3498db; border-radius:50%; border:4px solid white; box-shadow:0 2px 10px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; color:white; font-size:18px; }
+        .controls { display:flex; gap:15px; justify-content:center; margin-top:20px; }
+        .back-btn { background: linear-gradient(135deg,#95a5a6 0%,#7f8c8d 100%); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚖️ Kuvavertailu</h1>
+            <p>Vertaa kahta kuvaa eri ajoista liukusäätimellä</p>
+        </div>
+
+        <div class="comparison-section">
+            <!-- Aikavalinta -->
+            <div class="time-selection">
+                <div class="time-group">
+                    <h3>📅 Vanhemman kuvan aika</h3>
+                    <div class="form-group">
+                        <label for="beforeDate">Päivämäärä:</label>
+                        <input type="date" id="beforeDate">
+                    </div>
+                    <button onclick="loadBeforeImages()">Hae vanhemmat kuvat</button>
+                    <button onclick="loadSelectedFromSession()">Valittu istunnosta</button>
+                </div>
+
+                <div class="time-group">
+                    <h3>📅 Uudemman kuvan aika</h3>
+                    <div class="form-group">
+                        <label for="afterDate">Päivämäärä:</label>
+                        <input type="date" id="afterDate">
+                    </div>
+                    <button onclick="loadAfterImages()">Hae uudemmat kuvat</button>
+                </div>
+            </div>
+
+            <!-- Kuvien valinta -->
+            <div class="image-selectors">
+                <div class="selector">
+                    <h3>Vanha Kuva (Vasen)</h3>
+                    <div class="image-preview" id="beforePreview">
+                        <div style="color: #7f8c8d;">Valitse kuva</div>
+                    </div>
+                    <div class="image-scroller">
+                        <button class="scroll-btn" onclick="scrollBeforeImage(-1)">◀</button>
+                        <div class="image-counter" id="beforeCounter">0/0</div>
+                        <button class="scroll-btn" onclick="scrollBeforeImage(1)">▶</button>
+                    </div>
+                    <div class="image-grid" id="beforeGrid"></div>
+                </div>
+
+                <div class="selector">
+                    <h3>Uusi Kuva (Oikea)</h3>
+                    <div class="image-preview" id="afterPreview">
+                        <div style="color: #7f8c8d;">Valitse kuva</div>
+                    </div>
+                    <div class="image-scroller">
+                        <button class="scroll-btn" onclick="scrollAfterImage(-1)">◀</button>
+                        <div class="image-counter" id="afterCounter">0/0</div>
+                        <button class="scroll-btn" onclick="scrollAfterImage(1)">▶</button>
+                    </div>
+                    <div class="image-grid" id="afterGrid"></div>
+                </div>
+            </div>
+
+            <!-- Vertailu -->
+            <div class="comparison-container" id="comparisonContainer" style="display: none;">
+                <img id="beforeImage" class="comparison-image image-before" src="" alt="Vanha kuva">
+                <img id="afterImage" class="comparison-image image-after" src="" alt="Uusi kuva">
+                <div class="slider-container">
+                    <div class="slider">
+                        <div class="slider-handle">⇄</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="back-btn" onclick="window.location.href='/'">← Takaisin</button>
+                <button onclick="startComparison()" id="compareBtn" disabled>Aloita Vertailu</button>
+                <button onclick="resetComparison()">Nollaa Valinnat</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let beforeImages = [];
+        let afterImages = [];
+        let currentBeforeIndex = 0;
+        let currentAfterIndex = 0;
+        let selectedImages = {
+            before: null,
+            after: null
+        };
+
+        // Aseta oletuspäivämäärät
+        function setDefaultDates() {
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(today.getDate() - 1);
+            
+            document.getElementById('beforeDate').value = yesterday.toISOString().split('T')[0];
+            document.getElementById('afterDate').value = today.toISOString().split('T')[0];
+        }
+
+        // Hae vanhemmat kuvat
+        async function loadBeforeImages() {
+            const date = document.getElementById('beforeDate').value;
+            if (!date) {
+                alert('Valitse päivämäärä ensin');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/unique_images?start_date=${date}&end_date=${date}`);
+                const images = await response.json();
+                
+                beforeImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                
+                if (beforeImages.length === 0) {
+                    alert(`Ei kuvia valitulle päivämäärälle ${date}!`);
+                } else {
+                    alert(`Löytyi ${beforeImages.length} uniikkia kuvaa päivältä ${date}`);
+                }
+                
+                updateBeforeDisplay();
+                populateImageGrid('beforeGrid', beforeImages, 'before');
+            } catch (error) {
+                console.error('Error loading before images:', error);
+                alert('Virhe kuvien haussa');
+            }
+        }
+
+        // Hae uudemmat kuvat
+        async function loadAfterImages() {
+            const date = document.getElementById('afterDate').value;
+            if (!date) {
+                alert('Valitse päivämäärä ensin');
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/unique_images?start_date=${date}&end_date=${date}`);
+                const images = await response.json();
+                
+                afterImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+                
+                if (afterImages.length === 0) {
+                    alert(`Ei kuvia valitulle päivämäärälle ${date}!`);
+                } else {
+                    alert(`Löytyi ${afterImages.length} uniikkia kuvaa päivältä ${date}`);
+                }
+                
+                updateAfterDisplay();
+                populateImageGrid('afterGrid', afterImages, 'after');
+            } catch (error) {
+                console.error('Error loading after images:', error);
+                alert('Virhe kuvien haussa');
+            }
+        }
+
+        // Päivitä näyttö
+        function updateBeforeDisplay() {
+            const counter = document.getElementById('beforeCounter');
+            const preview = document.getElementById('beforePreview');
+            
+            counter.textContent = `${currentBeforeIndex + 1}/${beforeImages.length}`;
+            
+            if (beforeImages.length > 0) {
+                const image = beforeImages[currentBeforeIndex];
+                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
+                selectedImages.before = image;
+            } else {
+                preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
+                selectedImages.before = null;
+            }
+            
+            updateCompareButton();
+        }
+
+        function updateAfterDisplay() {
+            const counter = document.getElementById('afterCounter');
+            const preview = document.getElementById('afterPreview');
+            
+            counter.textContent = `${currentAfterIndex + 1}/${afterImages.length}`;
+            
+            if (afterImages.length > 0) {
+                const image = afterImages[currentAfterIndex];
+                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
+                selectedImages.after = image;
+            } else {
+                preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
+                selectedImages.after = null;
+            }
+            
+            updateCompareButton();
+        }
+
+        // Scrollaa kuvia
+        function scrollBeforeImage(direction) {
+            if (beforeImages.length === 0) return;
+            
+            currentBeforeIndex = (currentBeforeIndex + direction + beforeImages.length) % beforeImages.length;
+            updateBeforeDisplay();
+        }
+
+        function scrollAfterImage(direction) {
+            if (afterImages.length === 0) return;
+            
+            currentAfterIndex = (currentAfterIndex + direction + afterImages.length) % afterImages.length;
+            updateAfterDisplay();
+        }
+
+        // Populoi kuvagrid
+        function populateImageGrid(gridId, images, type) {
+            const grid = document.getElementById(gridId);
+            grid.innerHTML = '';
+
+            images.forEach((image, index) => {
+                const img = document.createElement('img');
+                img.src = `/images/${image.path}`;
+                img.className = 'grid-image';
+                img.title = `${image.filename}\n${image.date_display}`;
+                img.onerror = function() { this.style.display = 'none'; };
+                
+                img.addEventListener('click', () => {
+                    if (type === 'before') {
+                        currentBeforeIndex = index;
+                        updateBeforeDisplay();
+                    } else {
+                        currentAfterIndex = index;
+                        updateAfterDisplay();
+                    }
+                });
+                
+                grid.appendChild(img);
+            });
+        }
+
+        function updateCompareButton() {
+            const btn = document.getElementById('compareBtn');
+            btn.disabled = !(selectedImages.before && selectedImages.after);
+        }
+
+        function startComparison() {
+            if (!selectedImages.before || !selectedImages.after) return;
+
+            document.getElementById('beforeImage').src = `/images/${selectedImages.before.path}`;
+            document.getElementById('afterImage').src = `/images/${selectedImages.after.path}`;
+            document.getElementById('comparisonContainer').style.display = 'block';
+
+            initSlider();
+        }
+
+        function resetComparison() {
+            beforeImages = [];
+            afterImages = [];
+            currentBeforeIndex = 0;
+            currentAfterIndex = 0;
+            selectedImages.before = null;
+            selectedImages.after = null;
+            
+            document.getElementById('beforePreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
+            document.getElementById('afterPreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
+            document.getElementById('beforeCounter').textContent = '0/0';
+            document.getElementById('afterCounter').textContent = '0/0';
+            document.getElementById('beforeGrid').innerHTML = '';
+            document.getElementById('afterGrid').innerHTML = '';
+            document.getElementById('comparisonContainer').style.display = 'none';
+            
+            updateCompareButton();
+        }
+
+        function initSlider() {
+            const sliderContainer = document.querySelector('.slider-container');
+            const sliderBar = document.querySelector('.slider');
+            const handle = document.querySelector('.slider-handle');
+            const afterImage = document.querySelector('.image-after');
+            let isDragging = false;
+
+            function updateSliderPosition(clientX) {
+                const container = document.querySelector('.comparison-container');
+                const rect = container.getBoundingClientRect();
+                let percentage = ((clientX - rect.left) / rect.width) * 100;
+                percentage = Math.max(0, Math.min(100, percentage));
+                afterImage.style.clipPath = `polygon(0 0, ${percentage}% 0, ${percentage}% 100%, 0 100%)`;
+                sliderBar.style.left = `${percentage}%`;
+                handle.style.left = `${percentage}%`;
+            }
+
+            sliderContainer.addEventListener('pointerdown', function(e) {
+                isDragging = true;
+                sliderContainer.setPointerCapture(e.pointerId);
+                updateSliderPosition(e.clientX);
+            });
+
+            sliderContainer.addEventListener('pointermove', function(e) {
+                if (!isDragging) return;
+                updateSliderPosition(e.clientX);
+            });
+
+            sliderContainer.addEventListener('pointerup', function(e) {
+                isDragging = false;
+                try { sliderContainer.releasePointerCapture(e.pointerId); } catch (err) {}
+            });
+
+            // Touch-friendly: pointer events cover mouse and touch in modern browsers
+        }
+
+        // Lataa istunnosta valittu kuva ja asettaa sen ennen-kuvaksi
+        function loadSelectedFromSession() {
+            const sel = sessionStorage.getItem('selectedImage');
+            if (!sel) { alert('Ei valittua kuvaa istunnossa'); return; }
+            fetch('/api/image_by_path?path=' + encodeURIComponent(sel)).then(r=>r.json()).then(img=>{
+                if (img && img.path) {
+                    beforeImages = [img];
+                    populateImageGrid('beforeGrid', beforeImages, 'before');
+                    currentBeforeIndex = 0;
+                    updateBeforeDisplay();
+                    alert('Istunnosta ladattu kuva vanhemmaksi kuvaksi. Valitse toinen kuva vertailuun.');
+                } else {
+                    alert('Kuvaa ei löydy palvelimelta');
+                }
+            }).catch(err => { console.error(err); alert('Virhe haettaessa kuvaa'); });
+        }
+
+        // Alustus
+        document.addEventListener('DOMContentLoaded', function() {
+            setDefaultDates();
+        });
+    </script>
+</body>
+</html>
+    
