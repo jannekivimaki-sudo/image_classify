@@ -22,9 +22,10 @@ def get_week_number(date):
 
 def get_exif_date(image):
     try:
-        exif_data = image._getexif()
+        # Use getexif() instead of deprecated _getexif()
+        exif_data = image.getexif()
         if exif_data:
-            date_tags = [36867, 36868, 306]
+            date_tags = [36867, 36868, 306]  # DateTimeOriginal, DateTimeDigitized, DateTime
             for tag_id in date_tags:
                 if tag_id in exif_data:
                     date_str = exif_data[tag_id]
@@ -46,10 +47,12 @@ def get_image_metadata_date(file_path):
             if exif_date:
                 return exif_date, 'exif'
             try:
-                if hasattr(img, '_getexif') and img._getexif():
-                    for tag_id, value in img._getexif().items():
+                # Use getexif() instead of deprecated _getexif()
+                exif_data = img.getexif()
+                if exif_data:
+                    for tag_id, value in exif_data.items():
                         tag_name = TAGS.get(tag_id, tag_id)
-                        if 'date' in tag_name.lower() or 'time' in tag_name.lower():
+                        if isinstance(tag_name, str) and ('date' in tag_name.lower() or 'time' in tag_name.lower()):
                             if isinstance(value, str) and len(value) > 8:
                                 try:
                                     parsed_date = datetime.strptime(value, '%Y:%m:%d %H:%M:%S')

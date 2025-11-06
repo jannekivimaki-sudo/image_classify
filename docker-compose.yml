@@ -24,7 +24,10 @@ services:
       - "2222:22"
     volumes:
       - ./data/source:/home/camera/upload
-    command: camera:password:1001
+    # SECURITY: Use environment variables instead of hardcoded credentials
+    # Create a .env file with: SFTP_USERS=camera:password:1001
+    # Or set via docker-compose: SFTP_USERS=camera:your_secure_password:1001
+    command: ${SFTP_USERS:-camera:changeme:1001}
     restart: unless-stopped
 
 volumes:
