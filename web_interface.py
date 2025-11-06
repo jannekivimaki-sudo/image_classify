@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Constants
+MAX_FILESYSTEM_SCAN = 1000  # Maximum number of files to scan when detecting cameras from filesystem
+
 # Yritä tuoda RTSP-manageri (valinnainen)
 _RTPS_AVAILABLE = False
 try:
@@ -19,6 +22,47 @@ try:
     logger.info("RTSP manager ladattu")
 except Exception as e:
     logger.info(f"RTSP manager ei saatavilla: {e}")
+
+def extract_camera_from_filename(filename):
+    """Extract camera name from filename.
+    Returns substring before the first '-' in the basename.
+    Example: 'Etuovi-2024-01-01_12-00-00.jpg' -> 'Etuovi'
+    """
+    if not filename:
+        return None
+    # Get basename without path
+    basename = os.path.basename(filename)
+    # Split by '-' and take first part
+    parts = basename.split('-')
+    if parts:
+        return parts[0]
+    return None
+
+def get_camera_from_image_info(info, path=''):
+    """Helper to get camera from image info dict or DB record.
+    
+    Args:
+        info: Image info dictionary
+        path: Optional path to look up in DB
+        
+    Returns:
+        Camera name string or None
+    """
+    # First check if info has 'camera' field
+    if info and info.get('camera'):
+        return info['camera']
+    
+    # Try to get from DB if path is provided
+    if path and DB and DB.images:
+        db_info = DB.images.get(path)
+        if db_info and db_info.get('camera'):
+            return db_info['camera']
+    
+    # Fall back to parsing filename
+    if info and info.get('filename'):
+        return extract_camera_from_filename(info['filename'])
+    
+    return None
 
 def create_templates():
     """Luo HTML-templatit"""
@@ -419,6 +463,19 @@ def create_templates():
     </div>
 
     <div class="time-group">
+        <h3>🎥 Kamera</h3>
+        <div class="form-group">
+            <label for="cameraSelect">Valitse kamera:</label>
+            <select id="cameraSelect">
+                <option value="All">All</option>
+            </select>
+        </div>
+        <div style="margin-top: 10px; font-size: 14px; color: #7f8c8d;">
+            Valitse kamera suodattaaksesi kuvat. "All" näyttää kaikki kuvat.
+        </div>
+    </div>
+
+    <div class="time-group">
         <h3>🔍 Suodatus</h3>
         <div class="form-group">
             <label for="timeRange">Aikajana:</label>
@@ -726,6 +783,7 @@ def create_templates():
     async function loadImagesByTimeRange() {
         const startDateTime = document.getElementById('startDateTime').value;
         const endDateTime = document.getElementById('endDateTime').value;
+        const camera = document.getElementById('cameraSelect').value;
 
         if (!startDateTime || !endDateTime) {
             alert('Valitse alkuaika ja loppuaika!');
@@ -736,10 +794,14 @@ def create_templates():
         container.innerHTML = '<div class="loading">Haetaan kuvia...</div>';
 
         try {
-            const url = `/api/filter_by_time_range?start_datetime=${startDateTime}:00&end_datetime=${endDateTime}:00`;
+            let url = `/api/filter_by_time_range?start_datetime=${startDateTime}:00&end_datetime=${endDateTime}:00`;
+            if (camera && camera !== 'All') {
+                url += `&camera=${encodeURIComponent(camera)}`;
+            }
             const response = await fetch(url);
             const images = await response.json();
-            displayImages(images, `Aikaväli: ${startDateTime} - ${endDateTime}`);
+            const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
+            displayImages(images, `Aikaväli: ${startDateTime} - ${endDateTime}${cameraInfo}`);
             
         } catch (error) {
             container.innerHTML = '<div class="loading">Virhe kuvien haussa</div>';
@@ -825,6 +887,28 @@ def create_templates():
     }
 
     // ========== MUUT TOIMINNOT ==========
+
+    // Lataa kamerat dropdown-valikkoon
+    async function loadCameras() {
+        try {
+            const response = await fetch('/api/cameras');
+            const cameras = await response.json();
+            
+            const select = document.getElementById('cameraSelect');
+            select.innerHTML = '';
+            
+            cameras.forEach(camera => {
+                const option = document.createElement('option');
+                option.value = camera;
+                option.textContent = camera;
+                select.appendChild(option);
+            });
+            
+            console.log('Loaded cameras:', cameras);
+        } catch (error) {
+            console.error('Error loading cameras:', error);
+        }
+    }
 
     function selectImage(imagePath) {
         sessionStorage.setItem('selectedImage', imagePath);
@@ -962,6 +1046,7 @@ def create_templates():
     async function loadTimelapseImages() {
         const startDate = document.getElementById('timelapseStartDate').value;
         const endDate = document.getElementById('timelapseEndDate').value;
+        const camera = document.getElementById('cameraSelect').value;
 
         if (!startDate || !endDate) {
             alert('Valitse aikaväli!');
@@ -971,21 +1056,25 @@ def create_templates():
         try {
             document.getElementById('timelapseStats').innerHTML = 'Ladataan kuvia...';
             
-            const url = `/api/filter_by_time_range?start_datetime=${startDate}T00:00:00&end_datetime=${endDate}T23:59:59`;
+            let url = `/api/filter_by_time_range?start_datetime=${startDate}T00:00:00&end_datetime=${endDate}T23:59:59`;
+            if (camera && camera !== 'All') {
+                url += `&camera=${encodeURIComponent(camera)}`;
+            }
             const response = await fetch(url);
             const images = await response.json();
             
             timelapseImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
             
+            const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
             if (timelapseImages.length === 0) {
                 document.getElementById('timelapseStats').innerHTML = 
-                    `Ei kuvia aikavälillä ${startDate} - ${endDate}`;
+                    `Ei kuvia aikavälillä ${startDate} - ${endDate}${cameraInfo}`;
                 document.getElementById('startTimelapse').disabled = true;
                 return;
             }
 
             document.getElementById('timelapseStats').innerHTML = 
-                `Ladattu ${timelapseImages.length} kuvaa aikaväliltä ${startDate} - ${endDate}`;
+                `Ladattu ${timelapseImages.length} kuvaa aikaväliltä ${startDate} - ${endDate}${cameraInfo}`;
             document.getElementById('startTimelapse').disabled = false;
             
             if (timelapseImages.length > 0) {
@@ -1072,6 +1161,9 @@ def create_templates():
         
         // Kuuntele aikajanan muutoksia
         document.getElementById('timeRange').addEventListener('input', updateTimeDisplay);
+        
+        // Lataa kamerat
+        loadCameras();
         
         // Alusta näkymät
         showMainView();
@@ -1175,6 +1267,20 @@ def create_templates():
                 </div>
             </div>
 
+            <!-- Camera Selection -->
+            <div style="background:#f8f9fa; padding:20px; border-radius:10px; border:2px solid #e9ecef; margin-bottom:30px;">
+                <h3 style="margin-bottom:15px;">🎥 Kamera</h3>
+                <div class="form-group" style="max-width:300px;">
+                    <label for="cameraSelectCompare">Valitse kamera (yhteinen molemmille aikaväleille):</label>
+                    <select id="cameraSelectCompare">
+                        <option value="All">All</option>
+                    </select>
+                </div>
+                <div style="margin-top:10px; font-size:14px; color:#7f8c8d;">
+                    Valitse kamera suodattaaksesi kuvat molemmilta aikaväleiltä. "All" näyttää kaikki kuvat.
+                </div>
+            </div>
+
             <!-- Kuvien valinta -->
             <div class="image-selectors">
                 <div class="selector">
@@ -1266,6 +1372,7 @@ def create_templates():
         async function loadBeforeImages() {
             const startLocal = document.getElementById('beforeStart').value;
             const endLocal = document.getElementById('beforeEnd').value;
+            const camera = document.getElementById('cameraSelectCompare').value;
 
             if (!startLocal) { alert('Valitse aloitusaika ennen-kuville'); return; }
 
@@ -1284,16 +1391,21 @@ def create_templates():
                 const startIso = encodeURIComponent(start.toISOString());
                 const endIso = encodeURIComponent(end.toISOString());
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                let url = `/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`;
+                if (camera && camera !== 'All') {
+                    url += `&camera=${encodeURIComponent(camera)}`;
+                }
+                const response = await fetch(url);
                 const images = await response.json();
 
                 beforeImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentBeforeIndex = 0;
 
+                const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
                 if (beforeImages.length === 0) {
-                    alert(`Ei kuvia valitulla aikavälillä.`);
+                    alert(`Ei kuvia valitulla aikavälillä${cameraInfo}.`);
                 } else {
-                    alert(`Löytyi ${beforeImages.length} kuvaa aikaväliltä.`);
+                    alert(`Löytyi ${beforeImages.length} kuvaa aikaväliltä${cameraInfo}.`);
                 }
 
                 updateBeforeDisplay();
@@ -1308,6 +1420,7 @@ def create_templates():
         async function loadAfterImages() {
             const startLocal = document.getElementById('afterStart').value;
             const endLocal = document.getElementById('afterEnd').value;
+            const camera = document.getElementById('cameraSelectCompare').value;
 
             if (!startLocal) { alert('Valitse aloitusaika jälkeen-kuville'); return; }
 
@@ -1325,16 +1438,21 @@ def create_templates():
                 const startIso = encodeURIComponent(start.toISOString());
                 const endIso = encodeURIComponent(end.toISOString());
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                let url = `/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`;
+                if (camera && camera !== 'All') {
+                    url += `&camera=${encodeURIComponent(camera)}`;
+                }
+                const response = await fetch(url);
                 const images = await response.json();
 
                 afterImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentAfterIndex = 0;
 
+                const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
                 if (afterImages.length === 0) {
-                    alert(`Ei kuvia valitulla aikavälillä.`);
+                    alert(`Ei kuvia valitulla aikavälillä${cameraInfo}.`);
                 } else {
-                    alert(`Löytyi ${afterImages.length} kuvaa aikaväliltä.`);
+                    alert(`Löytyi ${afterImages.length} kuvaa aikaväliltä${cameraInfo}.`);
                 }
 
                 updateAfterDisplay();
@@ -1487,8 +1605,31 @@ def create_templates():
             }).catch(err => { console.error(err); alert('Virhe haettaessa kuvaa'); });
         }
 
+        // Lataa kamerat dropdown-valikkoon
+        async function loadCamerasCompare() {
+            try {
+                const response = await fetch('/api/cameras');
+                const cameras = await response.json();
+                
+                const select = document.getElementById('cameraSelectCompare');
+                select.innerHTML = '';
+                
+                cameras.forEach(camera => {
+                    const option = document.createElement('option');
+                    option.value = camera;
+                    option.textContent = camera;
+                    select.appendChild(option);
+                });
+                
+                console.log('Loaded cameras for compare:', cameras);
+            } catch (error) {
+                console.error('Error loading cameras:', error);
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             setDefaultDates();
+            loadCamerasCompare();
         });
     </script>
 </body>
@@ -1594,6 +1735,42 @@ def get_categories():
     except Exception as e:
         logger.error(f"Virhe kategorioiden haussa: {e}")
         return jsonify([])
+
+@app.route('/api/cameras')
+def get_cameras():
+    """Get list of available cameras from DB images or filesystem"""
+    try:
+        cameras = set()
+        
+        # Primary source: DB.images
+        if CLASSIFICATION_AVAILABLE and DB and DB.images:
+            for rel_path, info in DB.images.items():
+                camera = get_camera_from_image_info(info, rel_path)
+                if camera:
+                    cameras.add(camera)
+        
+        # Fallback: scan /data/classified for image-containing directories
+        # Limit scan to avoid performance issues on large directories
+        if not cameras and CLASSIFICATION_AVAILABLE:
+            image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+            scan_count = 0
+            for file_path in BASE_PATH.rglob('*'):
+                if scan_count >= MAX_FILESYSTEM_SCAN:
+                    logger.warning(f"Camera scan limit reached ({MAX_FILESYSTEM_SCAN} files)")
+                    break
+                if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                    scan_count += 1
+                    camera = extract_camera_from_filename(file_path.name)
+                    if camera:
+                        cameras.add(camera)
+        
+        # Return sorted list with 'All' first
+        camera_list = ['All'] + sorted(list(cameras))
+        logger.debug(f"Available cameras: {camera_list}")
+        return jsonify(camera_list)
+    except Exception as e:
+        logger.error(f"Error getting cameras: {e}")
+        return jsonify(['All'])
 
 @app.route('/api/browse')
 def browse_path():
@@ -1952,12 +2129,17 @@ def image_by_path():
         info = DB.images.get(p)
         if not info:
             return jsonify({})
+        
+        # Get camera using helper function
+        camera = get_camera_from_image_info(info, p)
+        
         return jsonify({
             'path': p,
             'timestamp': info['timestamp'],
             'category': info['category'],
             'filename': info['filename'],
-            'date_display': datetime.fromisoformat(info['timestamp']).strftime('%Y-%m-%d %H:%M:%S') if info['timestamp'] else ''
+            'date_display': datetime.fromisoformat(info['timestamp']).strftime('%Y-%m-%d %H:%M:%S') if info['timestamp'] else '',
+            'camera': camera
         })
     except Exception as e:
         logger.error(f"Virhe image_by_path: {e}")
@@ -2049,6 +2231,7 @@ def filter_by_time_range():
         start_datetime = request.args.get('start_datetime', '')
         end_datetime = request.args.get('end_datetime', '')
         time_unit = request.args.get('time_unit', 'all')
+        camera = request.args.get('camera', '')
 
         if not start_datetime or not end_datetime:
             return jsonify([])
@@ -2071,7 +2254,7 @@ def filter_by_time_range():
             logger.error(f"Virhe datetime-jäsennys: {e} (start='{start_datetime}', end='{end_datetime}')")
             return jsonify([])
 
-        logger.debug(f"filter_by_time_range: start_dt={start_dt.isoformat()} end_dt={end_dt.isoformat()}")
+        logger.debug(f"filter_by_time_range: start_dt={start_dt.isoformat()} end_dt={end_dt.isoformat()} camera={camera}")
 
         # Hae kaikki kuvat aikaväliltä (päivärajauksella)
         all_images = DB.get_images_by_date_range(
@@ -2080,7 +2263,7 @@ def filter_by_time_range():
         )
         logger.debug(f"DB.get_images_by_date_range returned {len(all_images)} images for days {start_dt.date()} - {end_dt.date()}")
 
-        # Suodata tarkemmin aikavälillä
+        # Suodata tarkemmin aikavälillä ja kameran mukaan
         filtered_images = []
         for img in all_images:
             ts = img.get('timestamp')
@@ -2090,13 +2273,24 @@ def filter_by_time_range():
                 img_dt = parse_iso_utc(ts)
                 # vertaillaan UTC-aware objekteina
                 if start_dt <= img_dt <= end_dt:
+                    # Camera filtering: check if we should filter by camera
+                    if camera and camera != 'All':
+                        # Get camera using helper function
+                        img_path = img.get('path', '')
+                        img_camera = get_camera_from_image_info(img, img_path)
+                        
+                        # Skip if camera doesn't match
+                        if img_camera != camera:
+                            logger.debug(f"Skipping image {img.get('filename')} - camera {img_camera} != {camera}")
+                            continue
+                    
                     filtered_images.append(img)
             except Exception as e:
                 # älä anna yhden virheellisen timestampin kaataa koko pyyntöä
                 logger.debug(f"skip image due to timestamp parse error: {img.get('filename','?')} ts='{ts}' error={e}")
                 continue
 
-        logger.debug(f"filter_by_time_range: filtered {len(filtered_images)} images in range")
+        logger.debug(f"filter_by_time_range: filtered {len(filtered_images)} images in range (camera={camera})")
         # Jos halutaan tietty aikayksikkö, suodata lisää
         if time_unit != 'all':
             filtered_images = [img for img in filtered_images

@@ -88,6 +88,20 @@
                 </div>
             </div>
 
+            <!-- Camera Selection -->
+            <div style="background:#f8f9fa; padding:20px; border-radius:10px; border:2px solid #e9ecef; margin-bottom:30px;">
+                <h3 style="margin-bottom:15px;">🎥 Kamera</h3>
+                <div class="form-group" style="max-width:300px;">
+                    <label for="cameraSelectCompare">Valitse kamera (yhteinen molemmille aikaväleille):</label>
+                    <select id="cameraSelectCompare">
+                        <option value="All">All</option>
+                    </select>
+                </div>
+                <div style="margin-top:10px; font-size:14px; color:#7f8c8d;">
+                    Valitse kamera suodattaaksesi kuvat molemmilta aikaväleiltä. "All" näyttää kaikki kuvat.
+                </div>
+            </div>
+
             <!-- Kuvien valinta -->
             <div class="image-selectors">
                 <div class="selector">
@@ -179,6 +193,7 @@
         async function loadBeforeImages() {
             const startLocal = document.getElementById('beforeStart').value;
             const endLocal = document.getElementById('beforeEnd').value;
+            const camera = document.getElementById('cameraSelectCompare').value;
 
             if (!startLocal) { alert('Valitse aloitusaika ennen-kuville'); return; }
 
@@ -197,16 +212,21 @@
                 const startIso = encodeURIComponent(start.toISOString());
                 const endIso = encodeURIComponent(end.toISOString());
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                let url = `/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`;
+                if (camera && camera !== 'All') {
+                    url += `&camera=${encodeURIComponent(camera)}`;
+                }
+                const response = await fetch(url);
                 const images = await response.json();
 
                 beforeImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentBeforeIndex = 0;
 
+                const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
                 if (beforeImages.length === 0) {
-                    alert(`Ei kuvia valitulla aikavälillä.`);
+                    alert(`Ei kuvia valitulla aikavälillä${cameraInfo}.`);
                 } else {
-                    alert(`Löytyi ${beforeImages.length} kuvaa aikaväliltä.`);
+                    alert(`Löytyi ${beforeImages.length} kuvaa aikaväliltä${cameraInfo}.`);
                 }
 
                 updateBeforeDisplay();
@@ -221,6 +241,7 @@
         async function loadAfterImages() {
             const startLocal = document.getElementById('afterStart').value;
             const endLocal = document.getElementById('afterEnd').value;
+            const camera = document.getElementById('cameraSelectCompare').value;
 
             if (!startLocal) { alert('Valitse aloitusaika jälkeen-kuville'); return; }
 
@@ -238,16 +259,21 @@
                 const startIso = encodeURIComponent(start.toISOString());
                 const endIso = encodeURIComponent(end.toISOString());
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                let url = `/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`;
+                if (camera && camera !== 'All') {
+                    url += `&camera=${encodeURIComponent(camera)}`;
+                }
+                const response = await fetch(url);
                 const images = await response.json();
 
                 afterImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentAfterIndex = 0;
 
+                const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
                 if (afterImages.length === 0) {
-                    alert(`Ei kuvia valitulla aikavälillä.`);
+                    alert(`Ei kuvia valitulla aikavälillä${cameraInfo}.`);
                 } else {
-                    alert(`Löytyi ${afterImages.length} kuvaa aikaväliltä.`);
+                    alert(`Löytyi ${afterImages.length} kuvaa aikaväliltä${cameraInfo}.`);
                 }
 
                 updateAfterDisplay();
@@ -400,8 +426,31 @@
             }).catch(err => { console.error(err); alert('Virhe haettaessa kuvaa'); });
         }
 
+        // Lataa kamerat dropdown-valikkoon
+        async function loadCamerasCompare() {
+            try {
+                const response = await fetch('/api/cameras');
+                const cameras = await response.json();
+                
+                const select = document.getElementById('cameraSelectCompare');
+                select.innerHTML = '';
+                
+                cameras.forEach(camera => {
+                    const option = document.createElement('option');
+                    option.value = camera;
+                    option.textContent = camera;
+                    select.appendChild(option);
+                });
+                
+                console.log('Loaded cameras for compare:', cameras);
+            } catch (error) {
+                console.error('Error loading cameras:', error);
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', function() {
             setDefaultDates();
+            loadCamerasCompare();
         });
     </script>
 </body>
