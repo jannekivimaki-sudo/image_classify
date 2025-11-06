@@ -2057,7 +2057,7 @@ def browse_path():
         
     except Exception as e:
         logger.error(f"Virhe polun selaamisessa: {e}")
-        return jsonify({'error': str(e)})
+        return jsonify({'error': 'Virhe polun selaamisessa'})
 
 @app.route('/api/time_units')
 def get_time_units():
@@ -2201,7 +2201,8 @@ def debug_info():
             }
         })
     except Exception as e:
-        return jsonify({'error': str(e)})
+        logger.error(f"Virhe debug-tietojen haussa: {e}")
+        return jsonify({'error': 'Virhe debug-tietojen haussa'})
 
 @app.route('/api/debug_compare')
 def debug_compare():
@@ -2239,7 +2240,8 @@ def debug_compare():
             'all_categories': DB.get_categories()[:10] if DB and hasattr(DB, 'get_categories') else []
         })
     except Exception as e:
-        return jsonify({'error': str(e)})
+        logger.error(f"Virhe debug_compare: {e}")
+        return jsonify({'error': 'Virhe debug-tietojen haussa'})
 
 @app.route('/api/rescan')
 def rescan_images():
@@ -2412,10 +2414,12 @@ def api_rtsp_start():
         return jsonify(result)
     except ValueError as e:
         logger.warning(f"Invalid RTSP URL: {e}")
-        return jsonify({'error': str(e)}), 400
+        # Don't expose internal error details
+        return jsonify({'error': 'Invalid RTSP URL'}), 400
     except Exception as e:
         logger.error(f"Virhe RTSP startissa: {e}")
-        return jsonify({'error': str(e)}), 500
+        # Don't expose internal error details
+        return jsonify({'error': 'Virhe RTSP-streamin käynnistyksessä'}), 500
 
 @app.route('/api/rtsp/stop', methods=['POST'])
 def api_rtsp_stop():
@@ -2435,7 +2439,7 @@ def api_rtsp_stop():
         return jsonify(res)
     except Exception as e:
         logger.error(f"Virhe RTSP stopissa: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Virhe RTSP-streamin pysäytyksessä'}), 500
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
