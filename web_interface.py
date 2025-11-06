@@ -443,7 +443,7 @@ def create_templates():
                     </button>
                 </div>
 
-                <!-- Hierarkkinen navigointi -->
+                <!-- Hierarkkinen navigoinointi -->
                 <div class="hierarchy-controls">
                     <h3>📁 Selaa kansiorakennetta</h3>
                     <div class="folder-grid" id="categoryGrid">
@@ -1084,7 +1084,7 @@ def create_templates():
 </html>
     '''
 
-    # compare.html pysyy samana
+    # Päivitetty compare.html: käyttäjä valitsee aikavälit before ja after (täydellinen versio)
     compare_html = '''
 <!DOCTYPE html>
 <html lang="fi">
@@ -1122,7 +1122,7 @@ def create_templates():
         .image-after { z-index:2; clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%); }
         .slider-container { position:absolute; top:0; left:0; width:100%; height:100%; z-index:3; }
         .slider { position:absolute; top:0; left:50%; transform:translateX(-50%); width:4px; height:100%; background:#3498db; cursor:ew-resize; }
-        .slider-handle { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:50px; height:50px; background:#3498db; border-radius:50%; border:4px solid white; box-shadow:0 2px 10px rgba(0,0,0,0.3); display:flex; align-items:center; justify-content:center; color:white; font-size:18px; }
+        .slider-handle { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:50px; height:50px; background:#3498db; border-radius:50%; border:4px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; }
         .controls { display:flex; gap:15px; justify-content:center; margin-top:20px; }
         .back-btn { background: linear-gradient(135deg,#95a5a6 0%,#7f8c8d 100%); }
     </style>
@@ -1135,25 +1135,43 @@ def create_templates():
         </div>
 
         <div class="comparison-section">
-            <!-- Aikavalinta -->
+            <!-- Aikavalinta: käyttäjä voi määritellä aikavälin BEFORE ja AFTER -->
             <div class="time-selection">
                 <div class="time-group">
-                    <h3>📅 Vanhemman kuvan aika</h3>
+                    <h3>📅 Vanhemmat kuvat — aikaväli</h3>
                     <div class="form-group">
-                        <label for="beforeDate">Päivämäärä:</label>
-                        <input type="date" id="beforeDate">
+                        <label for="beforeStart">Alku (päivä & aika):</label>
+                        <input type="datetime-local" id="beforeStart" step="60" />
                     </div>
-                    <button onclick="loadBeforeImages()">Hae vanhemmat kuvat</button>
-                    <button onclick="loadSelectedFromSession()">Valittu istunnosta</button>
+                    <div class="form-group">
+                        <label for="beforeEnd">Loppu (valinnainen):</label>
+                        <input type="datetime-local" id="beforeEnd" step="60" />
+                    </div>
+                    <div style="display:flex; gap:10px; margin-top:10px;">
+                        <button onclick="loadBeforeImages()">Hae kuvat valitulta aikaväliltä</button>
+                        <button onclick="loadSelectedFromSession()">Valittu istunnosta</button>
+                    </div>
+                    <div style="margin-top:8px; color:#7f8c8d; font-size:13px;">
+                        Jos loppuaikaa ei anneta, haetaan yhden tunnin alue aloitushetkestä (alkaen :00).
+                    </div>
                 </div>
 
                 <div class="time-group">
-                    <h3>📅 Uudemman kuvan aika</h3>
+                    <h3>📅 Uudemmat kuvat — aikaväli</h3>
                     <div class="form-group">
-                        <label for="afterDate">Päivämäärä:</label>
-                        <input type="date" id="afterDate">
+                        <label for="afterStart">Alku (päivä & aika):</label>
+                        <input type="datetime-local" id="afterStart" step="60" />
                     </div>
-                    <button onclick="loadAfterImages()">Hae uudemmat kuvat</button>
+                    <div class="form-group">
+                        <label for="afterEnd">Loppu (valinnainen):</label>
+                        <input type="datetime-local" id="afterEnd" step="60" />
+                    </div>
+                    <div style="margin-top:10px;">
+                        <button onclick="loadAfterImages()">Hae kuvat valitulta aikaväliltä</button>
+                    </div>
+                    <div style="margin-top:8px; color:#7f8c8d; font-size:13px;">
+                        Jos loppuaikaa ei anneta, haetaan yhden tunnin alue aloitushetkestä (alkaen :00).
+                    </div>
                 </div>
             </div>
 
@@ -1210,84 +1228,128 @@ def create_templates():
         let afterImages = [];
         let currentBeforeIndex = 0;
         let currentAfterIndex = 0;
-        let selectedImages = {
-            before: null,
-            after: null
-        };
+        let selectedImages = { before: null, after: null };
 
-        // Aseta oletuspäivämäärät
-        function setDefaultDates() {
-            const today = new Date();
-            const yesterday = new Date(today);
-            yesterday.setDate(today.getDate() - 1);
-            
-            document.getElementById('beforeDate').value = yesterday.toISOString().split('T')[0];
-            document.getElementById('afterDate').value = today.toISOString().split('T')[0];
+        // Apufunktio datetime-local muotoon (YYYY-MM-DDTHH:MM)
+        function formatDateTimeLocal(date) {
+            return date.toISOString().slice(0,16);
         }
 
-        // Hae vanhemmat kuvat
+        // Aseta oletusarvot: ennen = eilen sama hetki -> +1h alue, jälkeen = viime tunti
+        function setDefaultDates() {
+            const now = new Date();
+            // BEFORE: eilen sama kellonaika
+            const yesterday = new Date(now.getTime() - 24*60*60*1000);
+            const beforeStart = new Date(yesterday);
+            beforeStart.setMinutes(0,0,0);
+            const beforeEnd = new Date(beforeStart.getTime() + 3600*1000 - 1);
+
+            // AFTER: viime tunti
+            const afterEnd = new Date(now);
+            const afterStart = new Date(afterEnd.getTime() - 3600*1000 + 1);
+            afterStart.setMinutes(0,0,0);
+
+            document.getElementById('beforeStart').value = formatDateTimeLocal(beforeStart);
+            document.getElementById('beforeEnd').value = formatDateTimeLocal(beforeEnd);
+            document.getElementById('afterStart').value = formatDateTimeLocal(afterStart);
+            document.getElementById('afterEnd').value = formatDateTimeLocal(afterEnd);
+        }
+
+        // Helper: muunna datetime-local string selaimesta ISO UTC -muotoon
+        function toIsoOrNull(local) {
+            if (!local) return null;
+            const d = new Date(local);
+            return d.toISOString();
+        }
+
+        // Hae vanhemmat kuvat aikaväliltä (käyttäjän antama start..end)
         async function loadBeforeImages() {
-            const date = document.getElementById('beforeDate').value;
-            if (!date) {
-                alert('Valitse päivämäärä ensin');
-                return;
-            }
+            const startLocal = document.getElementById('beforeStart').value;
+            const endLocal = document.getElementById('beforeEnd').value;
+
+            if (!startLocal) { alert('Valitse aloitusaika ennen-kuville'); return; }
 
             try {
-                const response = await fetch(`/api/unique_images?start_date=${date}&end_date=${date}`);
-                const images = await response.json();
-                
-                beforeImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                
-                if (beforeImages.length === 0) {
-                    alert(`Ei kuvia valitulle päivämäärälle ${date}!`);
+                const start = new Date(startLocal);
+                let end;
+                if (endLocal) {
+                    end = new Date(endLocal);
                 } else {
-                    alert(`Löytyi ${beforeImages.length} uniikkia kuvaa päivältä ${date}`);
+                    // jos loppua ei annettu, laajennetaan yhteen tuntiin (alkaen tunnin alusta)
+                    const tmp = new Date(start);
+                    tmp.setMinutes(0,0,0);
+                    end = new Date(tmp.getTime() + 3600*1000 - 1);
                 }
-                
+
+                const startIso = encodeURIComponent(start.toISOString());
+                const endIso = encodeURIComponent(end.toISOString());
+
+                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                const images = await response.json();
+
+                beforeImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                currentBeforeIndex = 0;
+
+                if (beforeImages.length === 0) {
+                    alert(`Ei kuvia valitulla aikavälillä.`);
+                } else {
+                    alert(`Löytyi ${beforeImages.length} kuvaa aikaväliltä.`);
+                }
+
                 updateBeforeDisplay();
                 populateImageGrid('beforeGrid', beforeImages, 'before');
-            } catch (error) {
-                console.error('Error loading before images:', error);
-                alert('Virhe kuvien haussa');
+            } catch (err) {
+                console.error(err);
+                alert('Virhe kuvien haussa ennen-kuville');
             }
         }
 
-        // Hae uudemmat kuvat
+        // Hae uudemmat kuvat aikaväliltä
         async function loadAfterImages() {
-            const date = document.getElementById('afterDate').value;
-            if (!date) {
-                alert('Valitse päivämäärä ensin');
-                return;
-            }
+            const startLocal = document.getElementById('afterStart').value;
+            const endLocal = document.getElementById('afterEnd').value;
+
+            if (!startLocal) { alert('Valitse aloitusaika jälkeen-kuville'); return; }
 
             try {
-                const response = await fetch(`/api/unique_images?start_date=${date}&end_date=${date}`);
-                const images = await response.json();
-                
-                afterImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-                
-                if (afterImages.length === 0) {
-                    alert(`Ei kuvia valitulle päivämäärälle ${date}!`);
+                const start = new Date(startLocal);
+                let end;
+                if (endLocal) {
+                    end = new Date(endLocal);
                 } else {
-                    alert(`Löytyi ${afterImages.length} uniikkia kuvaa päivältä ${date}`);
+                    const tmp = new Date(start);
+                    tmp.setMinutes(0,0,0);
+                    end = new Date(tmp.getTime() + 3600*1000 - 1);
                 }
-                
+
+                const startIso = encodeURIComponent(start.toISOString());
+                const endIso = encodeURIComponent(end.toISOString());
+
+                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                const images = await response.json();
+
+                afterImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                currentAfterIndex = 0;
+
+                if (afterImages.length === 0) {
+                    alert(`Ei kuvia valitulla aikavälillä.`);
+                } else {
+                    alert(`Löytyi ${afterImages.length} kuvaa aikaväliltä.`);
+                }
+
                 updateAfterDisplay();
                 populateImageGrid('afterGrid', afterImages, 'after');
-            } catch (error) {
-                console.error('Error loading after images:', error);
-                alert('Virhe kuvien haussa');
+            } catch (err) {
+                console.error(err);
+                alert('Virhe kuvien haussa jälkeen-kuville');
             }
         }
 
-        // Päivitä näyttö
+        // Näytön päivitysfunktiot (sama logiikka kuin aiemmin)
         function updateBeforeDisplay() {
             const counter = document.getElementById('beforeCounter');
             const preview = document.getElementById('beforePreview');
-            
             counter.textContent = `${currentBeforeIndex + 1}/${beforeImages.length}`;
-            
             if (beforeImages.length > 0) {
                 const image = beforeImages[currentBeforeIndex];
                 preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
@@ -1296,16 +1358,13 @@ def create_templates():
                 preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
                 selectedImages.before = null;
             }
-            
             updateCompareButton();
         }
 
         function updateAfterDisplay() {
             const counter = document.getElementById('afterCounter');
             const preview = document.getElementById('afterPreview');
-            
             counter.textContent = `${currentAfterIndex + 1}/${afterImages.length}`;
-            
             if (afterImages.length > 0) {
                 const image = afterImages[currentAfterIndex];
                 preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
@@ -1314,37 +1373,30 @@ def create_templates():
                 preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
                 selectedImages.after = null;
             }
-            
             updateCompareButton();
         }
 
-        // Scrollaa kuvia
         function scrollBeforeImage(direction) {
             if (beforeImages.length === 0) return;
-            
             currentBeforeIndex = (currentBeforeIndex + direction + beforeImages.length) % beforeImages.length;
             updateBeforeDisplay();
         }
 
         function scrollAfterImage(direction) {
             if (afterImages.length === 0) return;
-            
             currentAfterIndex = (currentAfterIndex + direction + afterImages.length) % afterImages.length;
             updateAfterDisplay();
         }
 
-        // Populoi kuvagrid
         function populateImageGrid(gridId, images, type) {
             const grid = document.getElementById(gridId);
             grid.innerHTML = '';
-
             images.forEach((image, index) => {
                 const img = document.createElement('img');
                 img.src = `/images/${image.path}`;
                 img.className = 'grid-image';
                 img.title = `${image.filename}\\n${image.date_display}`;
                 img.onerror = function() { this.style.display = 'none'; };
-                
                 img.addEventListener('click', () => {
                     if (type === 'before') {
                         currentBeforeIndex = index;
@@ -1354,7 +1406,6 @@ def create_templates():
                         updateAfterDisplay();
                     }
                 });
-                
                 grid.appendChild(img);
             });
         }
@@ -1366,11 +1417,9 @@ def create_templates():
 
         function startComparison() {
             if (!selectedImages.before || !selectedImages.after) return;
-
             document.getElementById('beforeImage').src = `/images/${selectedImages.before.path}`;
             document.getElementById('afterImage').src = `/images/${selectedImages.after.path}`;
             document.getElementById('comparisonContainer').style.display = 'block';
-
             initSlider();
         }
 
@@ -1381,7 +1430,6 @@ def create_templates():
             currentAfterIndex = 0;
             selectedImages.before = null;
             selectedImages.after = null;
-            
             document.getElementById('beforePreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
             document.getElementById('afterPreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
             document.getElementById('beforeCounter').textContent = '0/0';
@@ -1389,7 +1437,6 @@ def create_templates():
             document.getElementById('beforeGrid').innerHTML = '';
             document.getElementById('afterGrid').innerHTML = '';
             document.getElementById('comparisonContainer').style.display = 'none';
-            
             updateCompareButton();
         }
 
@@ -1399,7 +1446,6 @@ def create_templates():
             const handle = document.querySelector('.slider-handle');
             const afterImage = document.querySelector('.image-after');
             let isDragging = false;
-
             function updateSliderPosition(clientX) {
                 const container = document.querySelector('.comparison-container');
                 const rect = container.getBoundingClientRect();
@@ -1409,27 +1455,22 @@ def create_templates():
                 sliderBar.style.left = `${percentage}%`;
                 handle.style.left = `${percentage}%`;
             }
-
             sliderContainer.addEventListener('pointerdown', function(e) {
                 isDragging = true;
                 sliderContainer.setPointerCapture(e.pointerId);
                 updateSliderPosition(e.clientX);
             });
-
             sliderContainer.addEventListener('pointermove', function(e) {
                 if (!isDragging) return;
                 updateSliderPosition(e.clientX);
             });
-
             sliderContainer.addEventListener('pointerup', function(e) {
                 isDragging = false;
                 try { sliderContainer.releasePointerCapture(e.pointerId); } catch (err) {}
             });
-
-            // Touch-friendly: pointer events cover mouse and touch in modern browsers
         }
 
-        // Lataa istunnosta valittu kuva ja asettaa sen ennen-kuvaksi
+        // Lataa istunnosta valittu kuva ja aseta before-kuvaksi
         function loadSelectedFromSession() {
             const sel = sessionStorage.getItem('selectedImage');
             if (!sel) { alert('Ei valittua kuvaa istunnossa'); return; }
@@ -1446,7 +1487,6 @@ def create_templates():
             }).catch(err => { console.error(err); alert('Virhe haettaessa kuvaa'); });
         }
 
-        // Alustus
         document.addEventListener('DOMContentLoaded', function() {
             setDefaultDates();
         });
@@ -2001,52 +2041,69 @@ def health_check():
 
 @app.route('/api/filter_by_time_range')
 def filter_by_time_range():
-    """Hae kuvat tarkalla aikavälillä (puolen tunnin tarkkuudella)"""
+    """Hae kuvat tarkalla aikavälillä"""
     try:
         if not CLASSIFICATION_AVAILABLE:
             return jsonify([])
-            
+
         start_datetime = request.args.get('start_datetime', '')
         end_datetime = request.args.get('end_datetime', '')
         time_unit = request.args.get('time_unit', 'all')
-        
+
         if not start_datetime or not end_datetime:
             return jsonify([])
-        
-        # Jäsennä datetime-merkkijonot
+
+        # Apufunktio: jäsennä ISO-teksti ja varmista UTC-aware datetime
+        from datetime import timezone
+        def parse_iso_utc(s):
+            # korvaa Z->+00:00 niin fromisoformat tunnistaa offsetin
+            s2 = s.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(s2)
+            if dt.tzinfo is None:
+                # oletetaan, että ilman offsetia ajat ovat UTC:ssa
+                return dt.replace(tzinfo=timezone.utc)
+            return dt.astimezone(timezone.utc)
+
         try:
-            start_dt = datetime.fromisoformat(start_datetime.replace('Z', '+00:00'))
-            end_dt = datetime.fromisoformat(end_datetime.replace('Z', '+00:00'))
-        except ValueError as e:
-            logger.error(f"Virhe datetime-jäsennys: {e}")
+            start_dt = parse_iso_utc(start_datetime)
+            end_dt = parse_iso_utc(end_datetime)
+        except Exception as e:
+            logger.error(f"Virhe datetime-jäsennys: {e} (start='{start_datetime}', end='{end_datetime}')")
             return jsonify([])
-        
-        # Hae kaikki kuvat aikaväliltä
+
+        logger.debug(f"filter_by_time_range: start_dt={start_dt.isoformat()} end_dt={end_dt.isoformat()}")
+
+        # Hae kaikki kuvat aikaväliltä (päivärajauksella)
         all_images = DB.get_images_by_date_range(
             start_dt.strftime('%Y-%m-%d'),
             end_dt.strftime('%Y-%m-%d')
         )
-        
+        logger.debug(f"DB.get_images_by_date_range returned {len(all_images)} images for days {start_dt.date()} - {end_dt.date()}")
+
         # Suodata tarkemmin aikavälillä
         filtered_images = []
         for img in all_images:
-            if not img.get('timestamp'):
+            ts = img.get('timestamp')
+            if not ts:
                 continue
-                
             try:
-                img_dt = datetime.fromisoformat(img['timestamp'].replace('Z', '+00:00'))
+                img_dt = parse_iso_utc(ts)
+                # vertaillaan UTC-aware objekteina
                 if start_dt <= img_dt <= end_dt:
                     filtered_images.append(img)
-            except ValueError:
+            except Exception as e:
+                # älä anna yhden virheellisen timestampin kaataa koko pyyntöä
+                logger.debug(f"skip image due to timestamp parse error: {img.get('filename','?')} ts='{ts}' error={e}")
                 continue
-        
+
+        logger.debug(f"filter_by_time_range: filtered {len(filtered_images)} images in range")
         # Jos halutaan tietty aikayksikkö, suodata lisää
         if time_unit != 'all':
-            filtered_images = [img for img in filtered_images 
-                             if img['category'].startswith(f"{time_unit}_")]
-        
+            filtered_images = [img for img in filtered_images
+                               if img.get('category','').startswith(f"{time_unit}_")]
+
         return jsonify(filtered_images)
-        
+
     except Exception as e:
         logger.error(f"Virhe aikavälin suodatuksessa: {e}")
         return jsonify([])

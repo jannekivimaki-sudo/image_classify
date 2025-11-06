@@ -10,9 +10,12 @@ services:
       - ./data/source:/data/source
       - ./data/classified:/data/classified
       - ./data/static:/data/static
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     environment:
       - FLASK_ENV=development
       - LINK_MODE=symlink   # vaihtoehdot: symlink, hardlink, copy
+      - TZ=Europe/Helsinki
     restart: unless-stopped
 
   sftp:
