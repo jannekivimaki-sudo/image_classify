@@ -391,6 +391,19 @@
     </div>
 
     <div class="time-group">
+        <h3>🎥 Kamera</h3>
+        <div class="form-group">
+            <label for="cameraSelect">Valitse kamera:</label>
+            <select id="cameraSelect">
+                <option value="All">All</option>
+            </select>
+        </div>
+        <div style="margin-top: 10px; font-size: 14px; color: #7f8c8d;">
+            Valitse kamera suodattaaksesi kuvat. "All" näyttää kaikki kuvat.
+        </div>
+    </div>
+
+    <div class="time-group">
         <h3>🔍 Suodatus</h3>
         <div class="form-group">
             <label for="timeRange">Aikajana:</label>
@@ -698,6 +711,7 @@
     async function loadImagesByTimeRange() {
         const startDateTime = document.getElementById('startDateTime').value;
         const endDateTime = document.getElementById('endDateTime').value;
+        const camera = document.getElementById('cameraSelect').value;
 
         if (!startDateTime || !endDateTime) {
             alert('Valitse alkuaika ja loppuaika!');
@@ -708,10 +722,14 @@
         container.innerHTML = '<div class="loading">Haetaan kuvia...</div>';
 
         try {
-            const url = `/api/filter_by_time_range?start_datetime=${startDateTime}:00&end_datetime=${endDateTime}:00`;
+            let url = `/api/filter_by_time_range?start_datetime=${startDateTime}:00&end_datetime=${endDateTime}:00`;
+            if (camera && camera !== 'All') {
+                url += `&camera=${encodeURIComponent(camera)}`;
+            }
             const response = await fetch(url);
             const images = await response.json();
-            displayImages(images, `Aikaväli: ${startDateTime} - ${endDateTime}`);
+            const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
+            displayImages(images, `Aikaväli: ${startDateTime} - ${endDateTime}${cameraInfo}`);
             
         } catch (error) {
             container.innerHTML = '<div class="loading">Virhe kuvien haussa</div>';
@@ -797,6 +815,28 @@
     }
 
     // ========== MUUT TOIMINNOT ==========
+
+    // Lataa kamerat dropdown-valikkoon
+    async function loadCameras() {
+        try {
+            const response = await fetch('/api/cameras');
+            const cameras = await response.json();
+            
+            const select = document.getElementById('cameraSelect');
+            select.innerHTML = '';
+            
+            cameras.forEach(camera => {
+                const option = document.createElement('option');
+                option.value = camera;
+                option.textContent = camera;
+                select.appendChild(option);
+            });
+            
+            console.log('Loaded cameras:', cameras);
+        } catch (error) {
+            console.error('Error loading cameras:', error);
+        }
+    }
 
     function selectImage(imagePath) {
         sessionStorage.setItem('selectedImage', imagePath);
@@ -934,6 +974,7 @@
     async function loadTimelapseImages() {
         const startDate = document.getElementById('timelapseStartDate').value;
         const endDate = document.getElementById('timelapseEndDate').value;
+        const camera = document.getElementById('cameraSelect').value;
 
         if (!startDate || !endDate) {
             alert('Valitse aikaväli!');
@@ -943,21 +984,25 @@
         try {
             document.getElementById('timelapseStats').innerHTML = 'Ladataan kuvia...';
             
-            const url = `/api/filter_by_time_range?start_datetime=${startDate}T00:00:00&end_datetime=${endDate}T23:59:59`;
+            let url = `/api/filter_by_time_range?start_datetime=${startDate}T00:00:00&end_datetime=${endDate}T23:59:59`;
+            if (camera && camera !== 'All') {
+                url += `&camera=${encodeURIComponent(camera)}`;
+            }
             const response = await fetch(url);
             const images = await response.json();
             
             timelapseImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
             
+            const cameraInfo = camera && camera !== 'All' ? ` (Kamera: ${camera})` : '';
             if (timelapseImages.length === 0) {
                 document.getElementById('timelapseStats').innerHTML = 
-                    `Ei kuvia aikavälillä ${startDate} - ${endDate}`;
+                    `Ei kuvia aikavälillä ${startDate} - ${endDate}${cameraInfo}`;
                 document.getElementById('startTimelapse').disabled = true;
                 return;
             }
 
             document.getElementById('timelapseStats').innerHTML = 
-                `Ladattu ${timelapseImages.length} kuvaa aikaväliltä ${startDate} - ${endDate}`;
+                `Ladattu ${timelapseImages.length} kuvaa aikaväliltä ${startDate} - ${endDate}${cameraInfo}`;
             document.getElementById('startTimelapse').disabled = false;
             
             if (timelapseImages.length > 0) {
@@ -1044,6 +1089,9 @@
         
         // Kuuntele aikajanan muutoksia
         document.getElementById('timeRange').addEventListener('input', updateTimeDisplay);
+        
+        // Lataa kamerat
+        loadCameras();
         
         // Alusta näkymät
         showMainView();
