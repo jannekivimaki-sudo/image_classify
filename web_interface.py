@@ -1872,11 +1872,19 @@ def count_images_in_folder(folder_path):
 def extract_camera_from_filename(name):
     """
     Palauttaa kameran nimen kuvatiedoston nimestä.
+    
+    Args:
+        name (str): Tiedoston nimi tai polku
+        
+    Returns:
+        str: Kameran nimi tai tyhjä merkkijono jos ei voida tunnistaa
+        
     Etsii ensin timestamp-muotoisen segmentin ('-<digits>.<digits>') ja palauttaa kaiken
     sitä edeltävän osan. Tämä käsittelee kameranimiä, joissa voi olla '-',
     esim. '2-Ovi-1762371760.378526-b2yisl.jpg' -> '2-Ovi'
     Fallback: jos timestampia ei löydy, ottaa osan ennen ensimmäistä '-'.
     """
+    # Type validation: accept only strings
     if not name or not isinstance(name, str):
         return ''
     

@@ -37,7 +37,9 @@ def start_rtsp_to_hls(rtsp_url, force_restart=False):
         raise ValueError(f"Invalid RTSP URL: {e}")
     
     # Basic sanity check for dangerous characters in the URL
-    if any(c in rtsp_url for c in [';', '`', '$', '(', ')']):
+    # Block shell metacharacters that could be used in injection attacks
+    dangerous_chars = [';', '`', '$', '(', ')', '&', '|', '<', '>', '{', '}', '[', ']', '\\', '\n', '\r']
+    if any(c in rtsp_url for c in dangerous_chars):
         raise ValueError("RTSP URL contains potentially dangerous characters")
     
     stream_id = _stream_id_from_url(rtsp_url)

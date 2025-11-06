@@ -50,9 +50,16 @@ def get_image_metadata_date(file_path):
                 # Use getexif() instead of deprecated _getexif()
                 exif_data = img.getexif()
                 if exif_data:
+                    # Whitelist of known date/time EXIF tag names to avoid false positives
+                    date_time_tags = {
+                        'DateTime', 'DateTimeOriginal', 'DateTimeDigitized',
+                        'GPSDateStamp', 'GPSTimeStamp', 'SubSecTime',
+                        'SubSecTimeOriginal', 'SubSecTimeDigitized'
+                    }
                     for tag_id, value in exif_data.items():
-                        tag_name = TAGS.get(tag_id, tag_id)
-                        if isinstance(tag_name, str) and ('date' in tag_name.lower() or 'time' in tag_name.lower()):
+                        tag_name = TAGS.get(tag_id, '')
+                        # Use whitelist instead of substring matching to avoid false positives
+                        if isinstance(tag_name, str) and tag_name in date_time_tags:
                             if isinstance(value, str) and len(value) > 8:
                                 try:
                                     parsed_date = datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
