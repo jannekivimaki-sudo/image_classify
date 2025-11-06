@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Constants
+MAX_FILESYSTEM_SCAN = 1000  # Maximum number of files to scan when detecting cameras from filesystem
+
 # Yritä tuoda RTSP-manageri (valinnainen)
 _RTPS_AVAILABLE = False
 try:
@@ -1751,10 +1754,9 @@ def get_cameras():
         if not cameras and CLASSIFICATION_AVAILABLE:
             image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
             scan_count = 0
-            max_scan = 1000  # Limit filesystem scan
             for file_path in BASE_PATH.rglob('*'):
-                if scan_count >= max_scan:
-                    logger.warning(f"Camera scan limit reached ({max_scan} files)")
+                if scan_count >= MAX_FILESYSTEM_SCAN:
+                    logger.warning(f"Camera scan limit reached ({MAX_FILESYSTEM_SCAN} files)")
                     break
                 if file_path.is_file() and file_path.suffix.lower() in image_extensions:
                     scan_count += 1
