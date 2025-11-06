@@ -35,6 +35,32 @@ def extract_camera_from_filename(filename):
         return parts[0]
     return None
 
+def get_camera_from_image_info(info, path=''):
+    """Helper to get camera from image info dict or DB record.
+    
+    Args:
+        info: Image info dictionary
+        path: Optional path to look up in DB
+        
+    Returns:
+        Camera name string or None
+    """
+    # First check if info has 'camera' field
+    if info and info.get('camera'):
+        return info['camera']
+    
+    # Try to get from DB if path is provided
+    if path and DB and DB.images:
+        db_info = DB.images.get(path)
+        if db_info and db_info.get('camera'):
+            return db_info['camera']
+    
+    # Fall back to parsing filename
+    if info and info.get('filename'):
+        return extract_camera_from_filename(info['filename'])
+    
+    return None
+
 def create_templates():
     """Luo HTML-templatit"""
     template_dir = Path(__file__).parent / 'templates'
@@ -1716,20 +1742,22 @@ def get_cameras():
         # Primary source: DB.images
         if CLASSIFICATION_AVAILABLE and DB and DB.images:
             for rel_path, info in DB.images.items():
-                # First check if info has 'camera' field
-                if info.get('camera'):
-                    cameras.add(info['camera'])
-                else:
-                    # Parse from filename
-                    camera = extract_camera_from_filename(info.get('filename', ''))
-                    if camera:
-                        cameras.add(camera)
+                camera = get_camera_from_image_info(info, rel_path)
+                if camera:
+                    cameras.add(camera)
         
         # Fallback: scan /data/classified for image-containing directories
+        # Limit scan to avoid performance issues on large directories
         if not cameras and CLASSIFICATION_AVAILABLE:
             image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
+            scan_count = 0
+            max_scan = 1000  # Limit filesystem scan
             for file_path in BASE_PATH.rglob('*'):
+                if scan_count >= max_scan:
+                    logger.warning(f"Camera scan limit reached ({max_scan} files)")
+                    break
                 if file_path.is_file() and file_path.suffix.lower() in image_extensions:
+                    scan_count += 1
                     camera = extract_camera_from_filename(file_path.name)
                     if camera:
                         cameras.add(camera)
@@ -2100,10 +2128,8 @@ def image_by_path():
         if not info:
             return jsonify({})
         
-        # Get camera from info or parse from filename
-        camera = info.get('camera')
-        if not camera:
-            camera = extract_camera_from_filename(info.get('filename', ''))
+        # Get camera using helper function
+        camera = get_camera_from_image_info(info, p)
         
         return jsonify({
             'path': p,
@@ -2247,14 +2273,9 @@ def filter_by_time_range():
                 if start_dt <= img_dt <= end_dt:
                     # Camera filtering: check if we should filter by camera
                     if camera and camera != 'All':
-                        # Get camera from DB record or parse from filename
-                        img_camera = None
-                        if DB.images.get(img.get('path', '')):
-                            db_info = DB.images[img['path']]
-                            img_camera = db_info.get('camera')
-                        
-                        if not img_camera:
-                            img_camera = extract_camera_from_filename(img.get('filename', ''))
+                        # Get camera using helper function
+                        img_path = img.get('path', '')
+                        img_camera = get_camera_from_image_info(img, img_path)
                         
                         # Skip if camera doesn't match
                         if img_camera != camera:
