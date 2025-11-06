@@ -6,6 +6,12 @@ import hashlib
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+# EXIF tag IDs for date/time information
+# Using standard EXIF tag IDs as defined in EXIF specification
+EXIF_DATETIME_ORIGINAL = 36867  # DateTimeOriginal: when photo was taken
+EXIF_DATETIME_DIGITIZED = 36868  # DateTimeDigitized: when photo was digitized
+EXIF_DATETIME = 306  # DateTime: file modification date/time
+
 def get_image_hash(file_path):
     try:
         hash_md5 = hashlib.md5()
@@ -25,7 +31,8 @@ def get_exif_date(image):
         # Use getexif() instead of deprecated _getexif()
         exif_data = image.getexif()
         if exif_data:
-            date_tags = [36867, 36868, 306]  # DateTimeOriginal, DateTimeDigitized, DateTime
+            # Try date tags in order of preference
+            date_tags = [EXIF_DATETIME_ORIGINAL, EXIF_DATETIME_DIGITIZED, EXIF_DATETIME]
             for tag_id in date_tags:
                 if tag_id in exif_data:
                     date_str = exif_data[tag_id]

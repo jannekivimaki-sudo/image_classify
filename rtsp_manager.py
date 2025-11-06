@@ -15,6 +15,9 @@ HLS_BASE = "/data/static/hls"
 _processes = {}  # stream_id -> Popen
 _lock = Lock()
 
+# Shell metacharacters that could be used in injection attacks
+DANGEROUS_CHARS = frozenset([';', '`', '$', '(', ')', '&', '|', '<', '>', '{', '}', '[', ']', '\\', '\n', '\r'])
+
 def _stream_id_from_url(url):
     return hashlib.md5(url.encode('utf-8')).hexdigest()[:12]
 
@@ -38,8 +41,7 @@ def start_rtsp_to_hls(rtsp_url, force_restart=False):
     
     # Basic sanity check for dangerous characters in the URL
     # Block shell metacharacters that could be used in injection attacks
-    dangerous_chars = [';', '`', '$', '(', ')', '&', '|', '<', '>', '{', '}', '[', ']', '\\', '\n', '\r']
-    if any(c in rtsp_url for c in dangerous_chars):
+    if any(c in rtsp_url for c in DANGEROUS_CHARS):
         raise ValueError("RTSP URL contains potentially dangerous characters")
     
     stream_id = _stream_id_from_url(rtsp_url)

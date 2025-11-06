@@ -1884,7 +1884,7 @@ def extract_camera_from_filename(name):
     esim. '2-Ovi-1762371760.378526-b2yisl.jpg' -> '2-Ovi'
     Fallback: jos timestampia ei löydy, ottaa osan ennen ensimmäistä '-'.
     """
-    # Type validation: accept only strings
+    # Type validation: reject None and non-string types to prevent errors in subsequent operations
     if not name or not isinstance(name, str):
         return ''
     
