@@ -1,6 +1,6 @@
 from flask import Flask, render_template, request, jsonify, send_from_directory
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
 import logging
@@ -21,11 +21,11 @@ except Exception as e:
     logger.info(f"RTSP manager ei saatavilla: {e}")
 
 def create_templates():
-    """Luo HTML-templatit"""
+    """Luo HTML-templatit (kirjoittaa aina täyden version, korvaa olemassa olevat)"""
     template_dir = Path(__file__).parent / 'templates'
     template_dir.mkdir(exist_ok=True)
-    
-    # index.html (sisältää RTSP-hallinnan, vertailun JA hierarkkisen navigoinnin)
+
+    # Täydellinen index.html - sisältää image modal ja click/dblclick -ratkaisun
     index_html = '''
 <!DOCTYPE html>
 <html lang="fi">
@@ -179,6 +179,7 @@ def create_templates():
             width: 100%;
             height: 200px;
             object-fit: cover;
+            display: block;
         }
         .image-info {
             padding: 15px;
@@ -259,22 +260,22 @@ def create_templates():
             max-width: 95%;
             max-height: 95%;
             overflow: auto;
-            width: 800px;
+            width: 900px;
         }
         .timelapse-controls {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 15px;
-    align-items: end;
-    margin: 20px 0;
-}
-.speed-control {
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 5px;
-    grid-column: 1 / -1;
-    margin-top: 10px;
-}
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            align-items: end;
+            margin: 20px 0;
+        }
+        .speed-control {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 5px;
+            grid-column: 1 / -1;
+            margin-top: 10px;
+        }
         .speed-control button {
             padding: 8px 5px;
             font-size: 12px;
@@ -375,6 +376,56 @@ def create_templates():
             color: #2c3e50;
             text-align: center;
         }
+
+        /* Image modal (lightbox) */
+        .image-modal {
+            display: none;
+            position: fixed;
+            z-index: 2000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background: rgba(0,0,0,0.85);
+            align-items: center;
+            justify-content: center;
+        }
+        .image-modal-content {
+            position: relative;
+            margin: auto;
+            max-width: 95%;
+            max-height: 95%;
+            background: transparent;
+            padding: 20px;
+            text-align: center;
+            color: #fff;
+        }
+        .image-modal-content img {
+            max-width: 100%;
+            max-height: 80vh;
+            border-radius: 8px;
+            border: 2px solid #ffffff33;
+        }
+        .image-modal-meta {
+            margin-top: 10px;
+            color: #ddd;
+            font-size: 14px;
+        }
+        .image-modal .close-btn {
+            position: absolute;
+            top: -10px;
+            right: -10px;
+            background: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            font-size: 20px;
+            cursor: pointer;
+            z-index: 2100;
+        }
     </style>
 </head>
 <body>
@@ -410,6 +461,12 @@ def create_templates():
             <label for="endDateTime">Loppuaika:</label>
             <input type="datetime-local" id="endDateTime" step="1800">
         </div>
+        <div class="form-group">
+            <label for="cameraSelect">Kamera:</label>
+            <select id="cameraSelect">
+                <option value="All">Kaikki kamerat</option>
+            </select>
+        </div>
         <div class="time-presets">
             <button class="preset-btn" onclick="setTimePreset('1hour')">1 tunti</button>
             <button class="preset-btn" onclick="setTimePreset('6hours')">6 tuntia</button>
@@ -443,7 +500,7 @@ def create_templates():
                     </button>
                 </div>
 
-                <!-- Hierarkkinen navigoinointi -->
+                <!-- Hierarkkinen navigoininti -->
                 <div class="hierarchy-controls">
                     <h3>📁 Selaa kansiorakennetta</h3>
                     <div class="folder-grid" id="categoryGrid">
@@ -485,12 +542,16 @@ def create_templates():
         
         <div class="timelapse-controls">
             <div class="form-group">
-                <label for="timelapseStartDate">Alkupäivä:</label>
-                <input type="date" id="timelapseStartDate" value="{{ start_date }}">
+                <label for="timelapseStartDatetime">Alku (päivä & aika):</label>
+                <input type="datetime-local" id="timelapseStartDatetime" step="60">
             </div>
             <div class="form-group">
-                <label for="timelapseEndDate">Loppupäivä:</label>
-                <input type="date" id="timelapseEndDate" value="{{ end_date }}">
+                <label for="timelapseEndDatetime">Loppu (päivä & aika):</label>
+                <input type="datetime-local" id="timelapseEndDatetime" step="60">
+            </div>
+            <div class="form-group">
+                <label for="timelapseCamera">Kamera:</label>
+                <select id="timelapseCamera"><option value="All">Kaikki kamerat</option></select>
             </div>
             
             <div class="speed-control">
@@ -521,6 +582,15 @@ def create_templates():
     </div>
 </div>
 
+<!-- Image modal / lightbox -->
+<div id="imageModal" class="image-modal" style="display:none; align-items:center;">
+    <div class="image-modal-content">
+        <button class="close-btn" onclick="closeImageModal()">×</button>
+        <img id="modalImage" src="" alt="Kuva" />
+        <div id="modalMeta" class="image-modal-meta"></div>
+    </div>
+</div>
+
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script>
     let currentImages = [];
@@ -530,6 +600,41 @@ def create_templates():
     let timelapseImages = [];
     let currentPath = '';
     let navigationStack = [];
+
+    // Utility: attach click/dblclick handlers that don't conflict.
+    // clickDelay ms determines how long to wait for possible dblclick.
+    const CLICK_DELAY = 260;
+
+    function makeSelectableAndZoomable(imgEl, path, filename, date_display, category) {
+        // Ensure existing handlers removed
+        imgEl._clickTimer = null;
+
+        imgEl.addEventListener('click', function (e) {
+            e.stopPropagation();
+            // schedule single-click action (select for comparison)
+            if (imgEl._clickTimer) {
+                clearTimeout(imgEl._clickTimer);
+            }
+            imgEl._clickTimer = setTimeout(() => {
+                imgEl._clickTimer = null;
+                selectImage(path);
+            }, CLICK_DELAY);
+        });
+
+        imgEl.addEventListener('dblclick', function (e) {
+            e.stopPropagation();
+            // cancel pending single-click
+            if (imgEl._clickTimer) {
+                clearTimeout(imgEl._clickTimer);
+                imgEl._clickTimer = null;
+            }
+            openImageModal(path, filename, date_display, category);
+        });
+
+        // Prevent parent handlers from catching dblclick/click
+        imgEl.addEventListener('mousedown', function(e){ e.stopPropagation(); });
+        imgEl.addEventListener('dblclick', function(e){ e.stopPropagation(); });
+    }
 
     // ========== HIERARKKINEN NAVIGOINTI ==========
     
@@ -630,10 +735,11 @@ def create_templates():
                 result.images.forEach(image => {
                     const card = document.createElement('div');
                     card.className = 'image-card';
-                    card.onclick = () => selectImage(image.path);
+                    // Poistetaan kortille suora onclick, käytetään kuvalle click/dblclick
+                    // card.onclick = () => selectImage(image.path);
                     
                     card.innerHTML = `
-                        <img src="/images/${image.path}" alt="${image.filename}" onerror="this.style.display='none'">
+                        <img src="/images/${image.path}" data-path="${image.path}" data-filename="${image.filename}" data-date="${image.date_display || ''}" data-category="${image.category || ''}" alt="${image.filename}" onerror="this.style.display='none'">
                         <div class="image-info">
                             <h3>${image.filename}</h3>
                             <div class="image-meta">
@@ -644,9 +750,18 @@ def create_templates():
                     
                     folderContent.appendChild(card);
                 });
+
+                // Lisää click/dblclick -tapahtumat kuville (prepare handlers)
+                folderContent.querySelectorAll('.image-card img').forEach(img => {
+                    const path = img.dataset.path;
+                    const filename = img.dataset.filename;
+                    const date = img.dataset.date;
+                    const category = img.dataset.category;
+                    makeSelectableAndZoomable(img, path, filename, date, category);
+                });
             }
             
-            if (result.folders.length === 0 && result.images.length === 0) {
+            if ((result.folders && result.folders.length === 0) && (result.images && result.images.length === 0)) {
                 folderContent.innerHTML = '<div class="loading">Tyhjä kansio</div>';
             }
             
@@ -711,21 +826,50 @@ def create_templates():
                 break;
         }
         
-        // Aseta datetime-local kenttiin
+        // Aseta datetime-local kenttiin (paikallinen aika)
         document.getElementById('startDateTime').value = formatDateTimeLocal(startDate);
         document.getElementById('endDateTime').value = formatDateTimeLocal(endDate);
         loadImagesByTimeRange();
     }
 
-    // Apufunktio datetime-local muotoon
+    // Apufunktio datetime-local muotoon (palauttaa paikallisen wall-clock arvon)
     function formatDateTimeLocal(date) {
-        return date.toISOString().slice(0, 16);
+        // date is a Date object. We need a string like "YYYY-MM-DDTHH:MM" representing local wall-clock time.
+        // To do that reliably we subtract the timezone offset in minutes.
+        const tzOffset = date.getTimezoneOffset() * 60000; // ms
+        const localISO = new Date(date.getTime() - tzOffset).toISOString().slice(0,16);
+        return localISO;
+    }
+
+    // Hae kamerat ja täytä select
+    async function loadCamerasToSelect() {
+        try {
+            const res = await fetch('/api/cameras');
+            const cams = await res.json();
+            const sel = document.getElementById('cameraSelect');
+            sel.innerHTML = '';
+            const timelapseSel = document.getElementById('timelapseCamera');
+            if (timelapseSel) timelapseSel.innerHTML = '';
+            cams.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c;
+                opt.textContent = (c === 'All') ? 'Kaikki kamerat' : c;
+                sel.appendChild(opt);
+                if (timelapseSel) {
+                    const opt2 = opt.cloneNode(true);
+                    timelapseSel.appendChild(opt2);
+                }
+            });
+        } catch (e) {
+            console.warn('camera list fetch error', e);
+        }
     }
 
     // Hae kuvat tarkalla aikavälillä
     async function loadImagesByTimeRange() {
         const startDateTime = document.getElementById('startDateTime').value;
         const endDateTime = document.getElementById('endDateTime').value;
+        const camera = document.getElementById('cameraSelect').value || 'All';
 
         if (!startDateTime || !endDateTime) {
             alert('Valitse alkuaika ja loppuaika!');
@@ -736,10 +880,13 @@ def create_templates():
         container.innerHTML = '<div class="loading">Haetaan kuvia...</div>';
 
         try {
-            const url = `/api/filter_by_time_range?start_datetime=${startDateTime}:00&end_datetime=${endDateTime}:00`;
+            // Convert local datetime-local values to timezone-aware ISO (UTC) before sending
+            const startIso = new Date(startDateTime).toISOString();
+            const endIso = new Date(endDateTime).toISOString();
+            const url = `/api/filter_by_time_range?start_datetime=${encodeURIComponent(startIso)}&end_datetime=${encodeURIComponent(endIso)}&camera=${encodeURIComponent(camera)}`;
             const response = await fetch(url);
             const images = await response.json();
-            displayImages(images, `Aikaväli: ${startDateTime} - ${endDateTime}`);
+            displayImages(images, `Aikaväli: ${startDateTime} - ${endDateTime} (Kamera: ${camera})`);
             
         } catch (error) {
             container.innerHTML = '<div class="loading">Virhe kuvien haussa</div>';
@@ -752,7 +899,7 @@ def create_templates():
         const container = document.getElementById('imagesContainer');
         currentImages = images;
 
-        if (images.length === 0) {
+        if (!images || images.length === 0) {
             container.innerHTML = '<div class="loading">Ei kuvia löytynyt valitulla aikavälillä</div>';
             document.getElementById('timelapseBtn').disabled = true;
             return;
@@ -770,8 +917,8 @@ def create_templates():
                 <p>Löytyi ${images.length} kuvaa</p>
             </div>
             ${images.map((image, index) => `
-                <div class="image-card" onclick="selectImage('${image.path}')" data-index="${index}">
-                    <img src="/images/${image.path}" alt="${image.filename}" onerror="this.style.display='none'">
+                <div class="image-card" data-index="${index}">
+                    <img src="/images/${image.path}" data-path="${image.path}" data-filename="${image.filename}" data-date="${image.date_display || ''}" data-category="${image.category || ''}" alt="${image.filename}" onerror="this.style.display='none'">
                     <div class="image-info">
                         <h3>${image.filename}</h3>
                         <div class="image-meta">
@@ -782,6 +929,15 @@ def create_templates():
                 </div>
             `).join('')}
         `;
+
+        // Asenna click/dblclick-kuuntelijat, jotta käyttäjä voi suurentaa kuvan kaksois‑klikkauksella (single click valitsee vertailuun)
+        container.querySelectorAll('.image-card img').forEach(img => {
+            const path = img.dataset.path;
+            const filename = img.dataset.filename;
+            const date = img.dataset.date;
+            const category = img.dataset.category;
+            makeSelectableAndZoomable(img, path, filename, date, category);
+        });
     }
 
     // Päivitä aikajanan näyttö
@@ -820,7 +976,11 @@ def create_templates():
         document.querySelectorAll('.image-card').forEach(card => {
             card.style.opacity = '1';
         });
-        document.getElementById('timeRange').value = Math.floor(currentImages.length / 2);
+        if (currentImages && currentImages.length > 0) {
+            document.getElementById('timeRange').value = Math.floor(currentImages.length / 2);
+        } else {
+            document.getElementById('timeRange').value = 0;
+        }
         updateTimeDisplay();
     }
 
@@ -829,6 +989,40 @@ def create_templates():
     function selectImage(imagePath) {
         sessionStorage.setItem('selectedImage', imagePath);
         alert('Kuva valittu vertailua varten! Mene "Vertaile Kuvia" -sivulle.');
+    }
+
+    // Image modal functions
+    function openImageModal(path, filename, date_display, category) {
+        try {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            const meta = document.getElementById('modalMeta');
+            modalImg.src = `/images/${path}`;
+            meta.innerHTML = `<div><strong>${filename || ''}</strong></div>
+                              <div>${date_display || ''}</div>
+                              <div>${category || ''}</div>`;
+            modal.style.display = 'flex';
+            // close on Escape
+            document.addEventListener('keydown', _imageModalKeyHandler);
+        } catch (e) {
+            console.error('openImageModal error', e);
+        }
+    }
+    function closeImageModal() {
+        try {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modalImg.src = '';
+            modal.style.display = 'none';
+            document.removeEventListener('keydown', _imageModalKeyHandler);
+        } catch (e) {
+            console.error('closeImageModal error', e);
+        }
+    }
+    function _imageModalKeyHandler(e) {
+        if (e.key === 'Escape') {
+            closeImageModal();
+        }
     }
 
     // Luokittelu
@@ -945,12 +1139,17 @@ def create_templates():
     function openTimelapseModal() {
         document.getElementById('timelapseModal').style.display = 'flex';
         // Aseta oletusarvot
-        const today = new Date();
-        const lastWeek = new Date();
-        lastWeek.setDate(today.getDate() - 7);
-        
-        document.getElementById('timelapseStartDate').value = lastWeek.toISOString().split('T')[0];
-        document.getElementById('timelapseEndDate').value = today.toISOString().split('T')[0];
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
+        // aseta datetime-local oletusarvoiksi viimeinen tunti
+        const startEl = document.getElementById('timelapseStartDatetime');
+        const endEl = document.getElementById('timelapseEndDatetime');
+        if (startEl && endEl) {
+            startEl.value = formatDateTimeLocal(oneHourAgo);
+            endEl.value = formatDateTimeLocal(now);
+        }
+        // varmista kameralistat
+        loadCamerasToSelect();
     }
 
     function closeTimelapseModal() {
@@ -960,32 +1159,37 @@ def create_templates():
 
     // Lataa timelapse-kuvat
     async function loadTimelapseImages() {
-        const startDate = document.getElementById('timelapseStartDate').value;
-        const endDate = document.getElementById('timelapseEndDate').value;
+        const startLocal = document.getElementById('timelapseStartDatetime').value;
+        const endLocal = document.getElementById('timelapseEndDatetime').value;
+        const camera = document.getElementById('timelapseCamera') ? document.getElementById('timelapseCamera').value : (document.getElementById('cameraSelect') ? document.getElementById('cameraSelect').value : 'All');
 
-        if (!startDate || !endDate) {
-            alert('Valitse aikaväli!');
+        if (!startLocal || !endLocal) {
+            alert('Valitse alkuaika ja loppuaika timelapsea varten!');
             return;
         }
 
         try {
             document.getElementById('timelapseStats').innerHTML = 'Ladataan kuvia...';
-            
-            const url = `/api/filter_by_time_range?start_datetime=${startDate}T00:00:00&end_datetime=${endDate}T23:59:59`;
+            // Convert to timezone-aware ISO (UTC) for backend
+            const startIso = new Date(startLocal).toISOString();
+            const endIso = new Date(endLocal).toISOString();
+            const url = `/api/filter_by_time_range?start_datetime=${encodeURIComponent(startIso)}&end_datetime=${encodeURIComponent(endIso)}&camera=${encodeURIComponent(camera)}`;
             const response = await fetch(url);
-            const images = await response.json();
-            
-            timelapseImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-            
+            let images = await response.json();
+
+            images = images.filter(img => img && img.timestamp).sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            timelapseImages = images;
+
             if (timelapseImages.length === 0) {
                 document.getElementById('timelapseStats').innerHTML = 
-                    `Ei kuvia aikavälillä ${startDate} - ${endDate}`;
+                    `Ei kuvia aikavälillä ${startLocal} - ${endLocal} (Kamera: ${camera})`;
                 document.getElementById('startTimelapse').disabled = true;
                 return;
             }
 
             document.getElementById('timelapseStats').innerHTML = 
-                `Ladattu ${timelapseImages.length} kuvaa aikaväliltä ${startDate} - ${endDate}`;
+                `Ladattu ${timelapseImages.length} kuvaa aikaväliltä ${startLocal} - ${endLocal} (Kamera: ${camera})`;
             document.getElementById('startTimelapse').disabled = false;
             
             if (timelapseImages.length > 0) {
@@ -1042,7 +1246,7 @@ def create_templates():
             timelapseProgress.innerHTML = `
                 <strong>${image.filename}</strong><br>
                 ${image.date_display}<br>
-                ${image.category}<br>
+                ${image.category || ''}<br>
                 Kuva ${currentTimelapseIndex + 1} / ${timelapseImages.length}<br>
                 Nopeus: ${currentSpeed}x
             `;
@@ -1063,20 +1267,17 @@ def create_templates():
 
     // Alustus
     document.addEventListener('DOMContentLoaded', function() {
-        // Aseta oletusarvot datetime-kenttiin (viimeisen tunnin ajalta)
         const now = new Date();
         const oneHourAgo = new Date(now.getTime() - (60 * 60 * 1000));
         
         document.getElementById('startDateTime').value = formatDateTimeLocal(oneHourAgo);
         document.getElementById('endDateTime').value = formatDateTimeLocal(now);
         
-        // Kuuntele aikajanan muutoksia
         document.getElementById('timeRange').addEventListener('input', updateTimeDisplay);
         
-        // Alusta näkymät
         showMainView();
+        loadCamerasToSelect();
         
-        // Hae kuvat automaattisesti oletusaikaväliltä
         loadImagesByTimeRange();
     });
 </script>
@@ -1084,7 +1285,7 @@ def create_templates():
 </html>
     '''
 
-    # Päivitetty compare.html: käyttäjä valitsee aikavälit before ja after (täydellinen versio)
+    # Täydellinen compare.html - sisältää image modal ja click/dblclick -ratkaisun
     compare_html = '''
 <!DOCTYPE html>
 <html lang="fi">
@@ -1125,6 +1326,12 @@ def create_templates():
         .slider-handle { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:50px; height:50px; background:#3498db; border-radius:50%; border:4px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; }
         .controls { display:flex; gap:15px; justify-content:center; margin-top:20px; }
         .back-btn { background: linear-gradient(135deg,#95a5a6 0%,#7f8c8d 100%); }
+        /* Image modal (lightbox) */
+        .image-modal { display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; overflow:auto; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; }
+        .image-modal-content { position:relative; margin:auto; max-width:95%; max-height:95%; background:transparent; padding:20px; text-align:center; color:#fff; }
+        .image-modal-content img { max-width:100%; max-height:80vh; border-radius:8px; border:2px solid #ffffff33; }
+        .image-modal-meta { margin-top:10px; color:#ddd; font-size:14px; }
+        .image-modal .close-btn { position:absolute; top:-10px; right:-10px; background:#e74c3c; color:white; border:none; border-radius:50%; width:40px; height:40px; font-size:20px; cursor:pointer; z-index:2100; }
     </style>
 </head>
 <body>
@@ -1147,6 +1354,10 @@ def create_templates():
                         <label for="beforeEnd">Loppu (valinnainen):</label>
                         <input type="datetime-local" id="beforeEnd" step="60" />
                     </div>
+                    <div class="form-group">
+                        <label for="beforeCamera">Kamerat:</label>
+                        <select id="beforeCamera"><option>All</option></select>
+                    </div>
                     <div style="display:flex; gap:10px; margin-top:10px;">
                         <button onclick="loadBeforeImages()">Hae kuvat valitulta aikaväliltä</button>
                         <button onclick="loadSelectedFromSession()">Valittu istunnosta</button>
@@ -1165,6 +1376,10 @@ def create_templates():
                     <div class="form-group">
                         <label for="afterEnd">Loppu (valinnainen):</label>
                         <input type="datetime-local" id="afterEnd" step="60" />
+                    </div>
+                    <div class="form-group">
+                        <label for="afterCamera">Kamerat:</label>
+                        <select id="afterCamera"><option>All</option></select>
                     </div>
                     <div style="margin-top:10px;">
                         <button onclick="loadAfterImages()">Hae kuvat valitulta aikaväliltä</button>
@@ -1223,51 +1438,99 @@ def create_templates():
         </div>
     </div>
 
+<!-- Image modal / lightbox -->
+<div id="imageModal" class="image-modal" style="display:none; align-items:center;">
+    <div class="image-modal-content">
+        <button class="close-btn" onclick="closeImageModal()">×</button>
+        <img id="modalImage" src="" alt="Kuva" />
+        <div id="modalMeta" class="image-modal-meta"></div>
+    </div>
+</div>
+
     <script>
+        const CLICK_DELAY = 260;
+
         let beforeImages = [];
         let afterImages = [];
         let currentBeforeIndex = 0;
         let currentAfterIndex = 0;
-        let selectedImages = { before: null, after: null };
+        let selectedImages = {
+            before: null,
+            after: null
+        };
 
-        // Apufunktio datetime-local muotoon (YYYY-MM-DDTHH:MM)
         function formatDateTimeLocal(date) {
-            return date.toISOString().slice(0,16);
+            // return local wall-clock string suitable for <input type="datetime-local">
+            const tzOffset = date.getTimezoneOffset() * 60000;
+            return new Date(date.getTime() - tzOffset).toISOString().slice(0,16);
         }
 
-        // Aseta oletusarvot: ennen = eilen sama hetki -> +1h alue, jälkeen = viime tunti
-        function setDefaultDates() {
-            const now = new Date();
-            // BEFORE: eilen sama kellonaika
-            const yesterday = new Date(now.getTime() - 24*60*60*1000);
-            const beforeStart = new Date(yesterday);
-            beforeStart.setMinutes(0,0,0);
-            const beforeEnd = new Date(beforeStart.getTime() + 3600*1000 - 1);
+        function makeSelectableAndZoomable(imgEl, path, filename, date_display, category) {
+            imgEl._clickTimer = null;
 
-            // AFTER: viime tunti
-            const afterEnd = new Date(now);
-            const afterStart = new Date(afterEnd.getTime() - 3600*1000 + 1);
-            afterStart.setMinutes(0,0,0);
+            imgEl.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (imgEl._clickTimer) clearTimeout(imgEl._clickTimer);
+                imgEl._clickTimer = setTimeout(() => {
+                    imgEl._clickTimer = null;
+                    // single click acts as selecting image for compare grid context
+                    if (imgEl.dataset.for === 'before') {
+                        // find index in beforeImages
+                        const idx = beforeImages.findIndex(x => x.path === path);
+                        if (idx >= 0) {
+                            currentBeforeIndex = idx;
+                            updateBeforeDisplay();
+                        }
+                    } else if (imgEl.dataset.for === 'after') {
+                        const idx = afterImages.findIndex(x => x.path === path);
+                        if (idx >= 0) {
+                            currentAfterIndex = idx;
+                            updateAfterDisplay();
+                        }
+                    } else {
+                        // fallback: set as before selection
+                        beforeImages = [ { path: path, filename: filename, date_display: date_display, category: category, timestamp: '' } ];
+                        currentBeforeIndex = 0;
+                        updateBeforeDisplay();
+                    }
+                }, CLICK_DELAY);
+            });
 
-            document.getElementById('beforeStart').value = formatDateTimeLocal(beforeStart);
-            document.getElementById('beforeEnd').value = formatDateTimeLocal(beforeEnd);
-            document.getElementById('afterStart').value = formatDateTimeLocal(afterStart);
-            document.getElementById('afterEnd').value = formatDateTimeLocal(afterEnd);
+            imgEl.addEventListener('dblclick', function (e) {
+                e.stopPropagation();
+                if (imgEl._clickTimer) { clearTimeout(imgEl._clickTimer); imgEl._clickTimer = null; }
+                openImageModal(path, filename, date_display, category);
+            });
+
+            imgEl.addEventListener('mousedown', function(e){ e.stopPropagation(); });
         }
 
-        // Helper: muunna datetime-local string selaimesta ISO UTC -muotoon
-        function toIsoOrNull(local) {
-            if (!local) return null;
-            const d = new Date(local);
-            return d.toISOString();
+        async function populateCompareCameras() {
+            try {
+                const res = await fetch('/api/cameras');
+                const cams = await res.json();
+                const b = document.getElementById('beforeCamera');
+                const a = document.getElementById('afterCamera');
+                b.innerHTML = ''; a.innerHTML = '';
+                cams.forEach(c => {
+                    const opt1 = document.createElement('option');
+                    opt1.value = c; opt1.textContent = (c==='All') ? 'Kaikki kamerat' : c;
+                    b.appendChild(opt1);
+                    const opt2 = opt1.cloneNode(true);
+                    a.appendChild(opt2);
+                });
+            } catch (e) { console.warn('pop cameras failed', e); }
         }
 
-        // Hae vanhemmat kuvat aikaväliltä (käyttäjän antama start..end)
         async function loadBeforeImages() {
             const startLocal = document.getElementById('beforeStart').value;
             const endLocal = document.getElementById('beforeEnd').value;
+            const camera = document.getElementById('beforeCamera').value || 'All';
 
-            if (!startLocal) { alert('Valitse aloitusaika ennen-kuville'); return; }
+            if (!startLocal) {
+                alert('Valitse päivämäärä ja aika ensin');
+                return;
+            }
 
             try {
                 const start = new Date(startLocal);
@@ -1275,19 +1538,18 @@ def create_templates():
                 if (endLocal) {
                     end = new Date(endLocal);
                 } else {
-                    // jos loppua ei annettu, laajennetaan yhteen tuntiin (alkaen tunnin alusta)
                     const tmp = new Date(start);
                     tmp.setMinutes(0,0,0);
                     end = new Date(tmp.getTime() + 3600*1000 - 1);
                 }
 
-                const startIso = encodeURIComponent(start.toISOString());
-                const endIso = encodeURIComponent(end.toISOString());
+                const startIso = start.toISOString();
+                const endIso = end.toISOString();
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                const response = await fetch(`/api/filter_by_time_range?start_datetime=${encodeURIComponent(startIso)}&end_datetime=${encodeURIComponent(endIso)}&camera=${encodeURIComponent(camera)}`);
                 const images = await response.json();
 
-                beforeImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                beforeImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentBeforeIndex = 0;
 
                 if (beforeImages.length === 0) {
@@ -1298,18 +1560,21 @@ def create_templates():
 
                 updateBeforeDisplay();
                 populateImageGrid('beforeGrid', beforeImages, 'before');
-            } catch (err) {
-                console.error(err);
-                alert('Virhe kuvien haussa ennen-kuville');
+            } catch (error) {
+                console.error('Error loading before images:', error);
+                alert('Virhe kuvien haussa');
             }
         }
 
-        // Hae uudemmat kuvat aikaväliltä
         async function loadAfterImages() {
             const startLocal = document.getElementById('afterStart').value;
             const endLocal = document.getElementById('afterEnd').value;
+            const camera = document.getElementById('afterCamera').value || 'All';
 
-            if (!startLocal) { alert('Valitse aloitusaika jälkeen-kuville'); return; }
+            if (!startLocal) {
+                alert('Valitse päivämäärä ja aika ensin');
+                return;
+            }
 
             try {
                 const start = new Date(startLocal);
@@ -1322,13 +1587,13 @@ def create_templates():
                     end = new Date(tmp.getTime() + 3600*1000 - 1);
                 }
 
-                const startIso = encodeURIComponent(start.toISOString());
-                const endIso = encodeURIComponent(end.toISOString());
+                const startIso = start.toISOString();
+                const endIso = end.toISOString();
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                const response = await fetch(`/api/filter_by_time_range?start_datetime=${encodeURIComponent(startIso)}&end_datetime=${encodeURIComponent(endIso)}&camera=${encodeURIComponent(camera)}`);
                 const images = await response.json();
 
-                afterImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                afterImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentAfterIndex = 0;
 
                 if (afterImages.length === 0) {
@@ -1339,51 +1604,70 @@ def create_templates():
 
                 updateAfterDisplay();
                 populateImageGrid('afterGrid', afterImages, 'after');
-            } catch (err) {
-                console.error(err);
-                alert('Virhe kuvien haussa jälkeen-kuville');
+            } catch (error) {
+                console.error('Error loading after images:', error);
+                alert('Virhe kuvien haussa');
             }
         }
 
-        // Näytön päivitysfunktiot (sama logiikka kuin aiemmin)
         function updateBeforeDisplay() {
             const counter = document.getElementById('beforeCounter');
             const preview = document.getElementById('beforePreview');
+            
             counter.textContent = `${currentBeforeIndex + 1}/${beforeImages.length}`;
+            
             if (beforeImages.length > 0) {
                 const image = beforeImages[currentBeforeIndex];
-                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
+                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}" data-path="${image.path}" data-filename="${image.filename}" data-date="${image.date_display || ''}" data-category="${image.category || ''}">`;
                 selectedImages.before = image;
+
+                const prevImg = preview.querySelector('img');
+                if (prevImg) {
+                    prevImg.dataset.for = 'before';
+                    makeSelectableAndZoomable(prevImg, prevImg.dataset.path, prevImg.dataset.filename, prevImg.dataset.date, prevImg.dataset.category);
+                }
             } else {
                 preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
                 selectedImages.before = null;
             }
+            
             updateCompareButton();
         }
 
         function updateAfterDisplay() {
             const counter = document.getElementById('afterCounter');
             const preview = document.getElementById('afterPreview');
+            
             counter.textContent = `${currentAfterIndex + 1}/${afterImages.length}`;
+            
             if (afterImages.length > 0) {
                 const image = afterImages[currentAfterIndex];
-                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
+                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}" data-path="${image.path}" data-filename="${image.filename}" data-date="${image.date_display || ''}" data-category="${image.category || ''}">`;
                 selectedImages.after = image;
+
+                const prevImg = preview.querySelector('img');
+                if (prevImg) {
+                    prevImg.dataset.for = 'after';
+                    makeSelectableAndZoomable(prevImg, prevImg.dataset.path, prevImg.dataset.filename, prevImg.dataset.date, prevImg.dataset.category);
+                }
             } else {
                 preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
                 selectedImages.after = null;
             }
+            
             updateCompareButton();
         }
 
         function scrollBeforeImage(direction) {
             if (beforeImages.length === 0) return;
+            
             currentBeforeIndex = (currentBeforeIndex + direction + beforeImages.length) % beforeImages.length;
             updateBeforeDisplay();
         }
 
         function scrollAfterImage(direction) {
             if (afterImages.length === 0) return;
+            
             currentAfterIndex = (currentAfterIndex + direction + afterImages.length) % afterImages.length;
             updateAfterDisplay();
         }
@@ -1391,21 +1675,30 @@ def create_templates():
         function populateImageGrid(gridId, images, type) {
             const grid = document.getElementById(gridId);
             grid.innerHTML = '';
+
             images.forEach((image, index) => {
                 const img = document.createElement('img');
                 img.src = `/images/${image.path}`;
                 img.className = 'grid-image';
                 img.title = `${image.filename}\\n${image.date_display}`;
+                img.dataset.path = image.path;
+                img.dataset.filename = image.filename;
+                img.dataset.date = image.date_display || '';
+                img.dataset.category = image.category || '';
+                img.dataset.for = type;
                 img.onerror = function() { this.style.display = 'none'; };
+                
                 img.addEventListener('click', () => {
-                    if (type === 'before') {
-                        currentBeforeIndex = index;
-                        updateBeforeDisplay();
-                    } else {
-                        currentAfterIndex = index;
-                        updateAfterDisplay();
-                    }
+                    // click handled by makeSelectableAndZoomable (which also schedules)
                 });
+                
+                img.addEventListener('dblclick', (e) => {
+                    // dblclick handled by makeSelectableAndZoomable
+                    e.stopPropagation();
+                });
+
+                makeSelectableAndZoomable(img, image.path, image.filename, image.date_display || '', image.category || '');
+
                 grid.appendChild(img);
             });
         }
@@ -1417,9 +1710,11 @@ def create_templates():
 
         function startComparison() {
             if (!selectedImages.before || !selectedImages.after) return;
+
             document.getElementById('beforeImage').src = `/images/${selectedImages.before.path}`;
             document.getElementById('afterImage').src = `/images/${selectedImages.after.path}`;
             document.getElementById('comparisonContainer').style.display = 'block';
+
             initSlider();
         }
 
@@ -1430,6 +1725,7 @@ def create_templates():
             currentAfterIndex = 0;
             selectedImages.before = null;
             selectedImages.after = null;
+            
             document.getElementById('beforePreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
             document.getElementById('afterPreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
             document.getElementById('beforeCounter').textContent = '0/0';
@@ -1437,6 +1733,7 @@ def create_templates():
             document.getElementById('beforeGrid').innerHTML = '';
             document.getElementById('afterGrid').innerHTML = '';
             document.getElementById('comparisonContainer').style.display = 'none';
+            
             updateCompareButton();
         }
 
@@ -1446,6 +1743,7 @@ def create_templates():
             const handle = document.querySelector('.slider-handle');
             const afterImage = document.querySelector('.image-after');
             let isDragging = false;
+
             function updateSliderPosition(clientX) {
                 const container = document.querySelector('.comparison-container');
                 const rect = container.getBoundingClientRect();
@@ -1455,22 +1753,44 @@ def create_templates():
                 sliderBar.style.left = `${percentage}%`;
                 handle.style.left = `${percentage}%`;
             }
+
             sliderContainer.addEventListener('pointerdown', function(e) {
                 isDragging = true;
                 sliderContainer.setPointerCapture(e.pointerId);
                 updateSliderPosition(e.clientX);
             });
+
             sliderContainer.addEventListener('pointermove', function(e) {
                 if (!isDragging) return;
                 updateSliderPosition(e.clientX);
             });
+
             sliderContainer.addEventListener('pointerup', function(e) {
                 isDragging = false;
                 try { sliderContainer.releasePointerCapture(e.pointerId); } catch (err) {}
             });
         }
 
-        // Lataa istunnosta valittu kuva ja aseta before-kuvaksi
+        function openImageModal(path, filename, date_display, category) {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            const meta = document.getElementById('modalMeta');
+            modalImg.src = `/images/${path}`;
+            meta.innerHTML = `<div><strong>${filename || ''}</strong></div><div>${date_display || ''}</div><div>${category || ''}</div>`;
+            modal.style.display = 'flex';
+            document.addEventListener('keydown', _imageModalKeyHandler);
+        }
+        function closeImageModal() {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modalImg.src = '';
+            modal.style.display = 'none';
+            document.removeEventListener('keydown', _imageModalKeyHandler);
+        }
+        function _imageModalKeyHandler(e) {
+            if (e.key === 'Escape') closeImageModal();
+        }
+
         function loadSelectedFromSession() {
             const sel = sessionStorage.getItem('selectedImage');
             if (!sel) { alert('Ei valittua kuvaa istunnossa'); return; }
@@ -1489,16 +1809,27 @@ def create_templates():
 
         document.addEventListener('DOMContentLoaded', function() {
             setDefaultDates();
+            populateCompareCameras();
         });
+
+        function setDefaultDates() {
+            const today = new Date();
+            const yesterday = new Date(today.getTime() - 24*60*60*1000);
+            
+            document.getElementById('beforeStart').value = formatDateTimeLocal(yesterday);
+            document.getElementById('beforeEnd').value = formatDateTimeLocal(yesterday);
+            document.getElementById('afterStart').value = formatDateTimeLocal(today);
+            document.getElementById('afterEnd').value = formatDateTimeLocal(today);
+        }
     </script>
 </body>
 </html>
     '''
-    
-    # Tallenna templatit
+
+    # Tallenna templatit (korvataan aina)
     (template_dir / 'index.html').write_text(index_html, encoding='utf-8')
     (template_dir / 'compare.html').write_text(compare_html, encoding='utf-8')
-    logger.info("Templatit luotu onnistuneesti")
+    logger.info("Templatit luotu/päivitetty onnistuneesti")
 
 # Yritä tuoda luokittelumoduuli
 CLASSIFICATION_AVAILABLE = False
@@ -1536,6 +1867,84 @@ def count_images_in_folder(folder_path):
     except Exception as e:
         logger.error(f"Virhe kuvien laskennassa {folder_path}: {e}")
         return 0
+
+# --- Uudet apufunktiot: kameran tunnistus ja API ---
+def extract_camera_from_filename(name):
+    """
+    Palauttaa kameran nimen kuvatiedoston nimestä.
+    Etsii ensin timestamp-muotoisen segmentin ('-<digits>.<digits>') ja palauttaa kaiken
+    sitä edeltävän osan. Tämä käsittelee kameranimiä, joissa voi olla '-',
+    esim. '2-Ovi-1762371760.378526-b2yisl.jpg' -> '2-Ovi'
+    Fallback: jos timestampia ei löydy, ottaa osan ennen ensimmäistä '-'.
+    """
+    if not name:
+        return ''
+    base = os.path.basename(name)
+
+    import re
+    # etsi pattern: '-' followed by digits, a dot, then digits (esim. -1762371760.378526)
+    m = re.search(r'-(\d+\.\d+)', base)
+    if m:
+        cam = base[:m.start()]
+        return cam.strip()
+    idx = base.find('-')
+    if idx > 0:
+        return base[:idx].strip()
+    return ''
+
+@app.route('/api/cameras')
+def get_cameras():
+    """Palauta lista saatavilla olevista kameroista (ei sisällä aikakansioita)."""
+    try:
+        cams = set()
+        # ensisijainen lähde: tietokanta, jos saatavilla
+        if CLASSIFICATION_AVAILABLE and DB and getattr(DB, 'images', None):
+            for rel, info in DB.images.items():
+                if not info:
+                    continue
+                # jos DB-tietueessa on camera-kenttä, käytä sitä
+                if isinstance(info, dict) and info.get('camera'):
+                    cams.add(info.get('camera'))
+                    continue
+                # fallback: filename tai polku
+                fname = None
+                if isinstance(info, dict):
+                    fname = info.get('filename') or info.get('path')
+                if not fname:
+                    fname = os.path.basename(rel)
+                cam = extract_camera_from_filename(fname)
+                if cam:
+                    cams.add(cam)
+
+        # fallback: skannaa filesystem-juuren kansion, mutta suodattaa aikakansiot pois
+        base = Path('/data/classified')
+        time_unit_names = {'years', 'months', 'weeks', 'days', 'hours', 'minutes', 'seconds'}
+        if base.exists():
+            for item in base.iterdir():
+                if not item.is_dir():
+                    continue
+                name = item.name
+                # Ohita selkeästi aikakansiot
+                if name.lower() in time_unit_names:
+                    continue
+                # Jos kansio sisältää kuvia (tai alikansioissa), pidetään se mahdollisena kamerana
+                has_images = False
+                for ext in ('*.jpg','*.jpeg','*.png','*.gif','*.bmp','*.webp'):
+                    if any(item.rglob(ext)):
+                        has_images = True
+                        break
+                if has_images:
+                    cams.add(name)
+
+        # Jos joku entry on kuitenkin samanlainen kuin aikayksikkö, varmuussuodatus
+        cams = {c for c in cams if c and c.lower() not in time_unit_names}
+
+        cams_list = sorted(cams)
+        # Lisää "All" vaihtoehto aluksi
+        return jsonify(['All'] + cams_list)
+    except Exception as e:
+        logger.error(f"Virhe api_get_cameras: {e}")
+        return jsonify(['All'])
 
 # API-reitit
 
@@ -1643,10 +2052,6 @@ def browse_path():
         logger.error(f"Virhe polun selaamisessa: {e}")
         return jsonify({'error': str(e)})
 
-# ... (muut API-reitit pysyvät samoina)
-
-# Korvaa get_time_units -funktio tällä:
-
 @app.route('/api/time_units')
 def get_time_units():
     """Hae saatavilla olevat aikayksiköt"""
@@ -1661,7 +2066,6 @@ def get_time_units():
             
         # Käytetään tietokantaa hakemaan saatavilla olevat arvot
         if unit == 'year':
-            # Hae vuodet suoraan kansiorakenteesta
             years_path = BASE_PATH / 'years'
             if years_path.exists():
                 years = [f.name for f in years_path.iterdir() if f.is_dir()]
@@ -1669,27 +2073,22 @@ def get_time_units():
                 return jsonify([{'value': u, 'label': f'Vuosi {u}'} for u in units])
                 
         elif unit == 'month':
-            # Hae kuukaudet (1-12)
             months = [str(i).zfill(2) for i in range(1, 13)]
             return jsonify([{'value': str(i), 'label': f'Kuukausi {i}'} for i in range(1, 13)])
             
         elif unit == 'week':
-            # Hae viikot (1-53)
             weeks = [str(i).zfill(2) for i in range(1, 54)]
             return jsonify([{'value': str(i), 'label': f'Viikko {i}'} for i in range(1, 54)])
             
         elif unit == 'day':
-            # Hae päivät (1-31)
             days = [str(i).zfill(2) for i in range(1, 32)]
             return jsonify([{'value': str(i), 'label': f'Päivä {i}'} for i in range(1, 32)])
             
         elif unit == 'hour':
-            # Hae tunnit (0-23)
             hours = [str(i).zfill(2) for i in range(0, 24)]
             return jsonify([{'value': str(i), 'label': f'Tunti {i}'} for i in range(0, 24)])
             
         elif unit == 'minute':
-            # Hae minuutit (0-59)
             minutes = [str(i).zfill(2) for i in range(0, 60)]
             return jsonify([{'value': str(i), 'label': f'Minuutti {i}'} for i in range(0, 60)])
             
@@ -1699,8 +2098,6 @@ def get_time_units():
     except Exception as e:
         logger.error(f"Virhe aikayksiköiden haussa: {e}")
         return jsonify([])
-
-# Korvaa get_images_by_category -funktio tällä:
 
 @app.route('/api/images_by_category')
 def get_images_by_category():
@@ -1715,7 +2112,6 @@ def get_images_by_category():
         if not category_type or not category_value:
             return jsonify([])
         
-        # Käytetään suoraa tiedostojärjestelmän hakua
         base_category_path = BASE_PATH / category_type
         
         if not base_category_path.exists():
@@ -1723,11 +2119,9 @@ def get_images_by_category():
         
         images = []
         
-        # Etsi kuvat rekursiivisesti
         image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp'}
         
         if category_type == 'years':
-            # Etsi vuoden kuvat
             year_path = base_category_path / category_value
             if year_path.exists():
                 for image_file in year_path.rglob('*'):
@@ -1741,7 +2135,6 @@ def get_images_by_category():
                         })
                         
         elif category_type == 'months':
-            # Etsi kuukauden kuvat kaikilta vuosilta
             for year_path in base_category_path.iterdir():
                 if year_path.is_dir():
                     month_path = year_path / category_value
@@ -1771,15 +2164,15 @@ def debug_info():
         if not CLASSIFICATION_AVAILABLE:
             return jsonify({'error': 'Luokittelu ei ole saatavilla'})
         
-        total_images = len(DB.images)
-        categories = DB.get_categories()
+        total_images = len(DB.images) if DB and getattr(DB, 'images', None) else 0
+        categories = DB.get_categories() if DB and hasattr(DB, 'get_categories') else []
         
-        classified_path = BASE_PATH
+        classified_path = BASE_PATH if 'BASE_PATH' in globals() else Path('/data/classified')
         year_images = list(classified_path.rglob('years/*/*.jpg')) + list(classified_path.rglob('years/*/*.png'))
         month_images = list(classified_path.rglob('months/*/*/*.jpg')) + list(classified_path.rglob('months/*/*/*.png'))
         day_images = list(classified_path.rglob('days/*/*/*/*.jpg')) + list(classified_path.rglob('days/*/*/*/*.png'))
         
-        test_images = DB.get_images_by_date_range('', '')
+        test_images = DB.get_images_by_date_range('', '') if DB else []
         
         return jsonify({
             'database': {
@@ -1818,14 +2211,14 @@ def debug_compare():
         
         results = {}
         for test_date in test_dates:
-            images = DB.get_images_by_date_range(test_date, test_date)
+            images = DB.get_images_by_date_range(test_date, test_date) if DB else []
             results[test_date] = {
                 'images_found': len(images),
                 'sample': [img['filename'] for img in images[:3]] if images else []
             }
         
-        total_images = len(DB.images)
-        date_range = DB.get_date_range()
+        total_images = len(DB.images) if DB and getattr(DB, 'images', None) else 0
+        date_range = DB.get_date_range() if DB and hasattr(DB, 'get_date_range') else (None, None)
         
         return jsonify({
             'database': {
@@ -1836,7 +2229,7 @@ def debug_compare():
                 }
             },
             'test_results': results,
-            'all_categories': DB.get_categories()[:10]
+            'all_categories': DB.get_categories()[:10] if DB and hasattr(DB, 'get_categories') else []
         })
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -1889,7 +2282,7 @@ def get_images():
         time_unit = request.args.get('time_unit', '')
         time_value = request.args.get('time_value', '')
         
-        images = DB.get_unique_images_by_date_range(start_date, end_date)
+        images = DB.get_unique_images_by_date_range(start_date, end_date) if DB else []
         
         if time_unit and time_value:
             images = [img for img in images if f"{time_unit}_{time_value}" in img['category']]
@@ -1910,7 +2303,7 @@ def get_unique_images():
         start_date = request.args.get('start_date', '')
         end_date = request.args.get('end_date', '')
         
-        all_images = DB.get_images_by_date_range(start_date, end_date)
+        all_images = DB.get_images_by_date_range(start_date, end_date) if DB else []
         
         unique_images = []
         seen_filenames = set()
@@ -1933,7 +2326,7 @@ def search_images():
         q = (request.args.get('q') or '').strip().lower()
         if not CLASSIFICATION_AVAILABLE:
             return jsonify([])
-        images = DB.get_unique_images_by_date_range('', '')
+        images = DB.get_unique_images_by_date_range('', '') if DB else []
         if not q:
             return jsonify(images)
         filtered = [img for img in images if q in img['filename'].lower() or q in img['category'].lower()]
@@ -1949,15 +2342,27 @@ def image_by_path():
         p = request.args.get('path', '')
         if not CLASSIFICATION_AVAILABLE or not p:
             return jsonify({})
-        info = DB.images.get(p)
+        info = DB.images.get(p) if DB and getattr(DB,'images',None) else None
         if not info:
-            return jsonify({})
+            fname = os.path.basename(p)
+            cam = extract_camera_from_filename(fname)
+            return jsonify({
+                'path': p,
+                'timestamp': '',
+                'category': '',
+                'filename': fname,
+                'date_display': '',
+                'camera': cam
+            })
+        fname = info.get('filename') if isinstance(info, dict) else os.path.basename(p)
+        cam = info.get('camera') if isinstance(info, dict) and info.get('camera') else extract_camera_from_filename(fname)
         return jsonify({
             'path': p,
-            'timestamp': info['timestamp'],
-            'category': info['category'],
-            'filename': info['filename'],
-            'date_display': datetime.fromisoformat(info['timestamp']).strftime('%Y-%m-%d %H:%M:%S') if info['timestamp'] else ''
+            'timestamp': info.get('timestamp'),
+            'category': info.get('category'),
+            'filename': fname,
+            'date_display': datetime.fromisoformat(info['timestamp']).strftime('%Y-%m-%d %H:%M:%S') if info.get('timestamp') else '',
+            'camera': cam
         })
     except Exception as e:
         logger.error(f"Virhe image_by_path: {e}")
@@ -2037,31 +2442,32 @@ def compare_view():
 def health_check():
     """Terveystarkistus"""
     return jsonify({'status': 'healthy', 'classification_available': CLASSIFICATION_AVAILABLE, 'rtsp_available': _RTPS_AVAILABLE})
-# Lisää web_interface.py tiedoston loppuun ennen if __name__ == '__main__': osiota
 
 @app.route('/api/filter_by_time_range')
 def filter_by_time_range():
-    """Hae kuvat tarkalla aikavälillä"""
+    """Hae kuvat tarkalla aikavälillä (nyt tukee camera-parametria)"""
     try:
         if not CLASSIFICATION_AVAILABLE:
             return jsonify([])
-
+            
         start_datetime = request.args.get('start_datetime', '')
         end_datetime = request.args.get('end_datetime', '')
         time_unit = request.args.get('time_unit', 'all')
+        camera = request.args.get('camera', '')  # 'All' tai tyhjä tarkoittaa kaikkia
 
         if not start_datetime or not end_datetime:
             return jsonify([])
-
-        # Apufunktio: jäsennä ISO-teksti ja varmista UTC-aware datetime
-        from datetime import timezone
+        
+        # Parsitaan ja normalisoidaan UTC-aware
         def parse_iso_utc(s):
-            # korvaa Z->+00:00 niin fromisoformat tunnistaa offsetin
+            # Accept timezone-aware ISO strings like '2025-11-06T14:00:00Z' or '2025-11-06T14:00:00+02:00'
+            # If string is naive (no tz), assume it's local server time and convert to UTC.
             s2 = s.replace('Z', '+00:00')
             dt = datetime.fromisoformat(s2)
             if dt.tzinfo is None:
-                # oletetaan, että ilman offsetia ajat ovat UTC:ssa
-                return dt.replace(tzinfo=timezone.utc)
+                # assume server local timezone for naive datetimes
+                local_tz = datetime.now().astimezone().tzinfo
+                dt = dt.replace(tzinfo=local_tz)
             return dt.astimezone(timezone.utc)
 
         try:
@@ -2071,48 +2477,55 @@ def filter_by_time_range():
             logger.error(f"Virhe datetime-jäsennys: {e} (start='{start_datetime}', end='{end_datetime}')")
             return jsonify([])
 
-        logger.debug(f"filter_by_time_range: start_dt={start_dt.isoformat()} end_dt={end_dt.isoformat()}")
+        logger.debug(f"filter_by_time_range: start_dt={start_dt.isoformat()} end_dt={end_dt.isoformat()} camera={camera}")
 
         # Hae kaikki kuvat aikaväliltä (päivärajauksella)
         all_images = DB.get_images_by_date_range(
             start_dt.strftime('%Y-%m-%d'),
             end_dt.strftime('%Y-%m-%d')
-        )
+        ) if DB else []
         logger.debug(f"DB.get_images_by_date_range returned {len(all_images)} images for days {start_dt.date()} - {end_dt.date()}")
 
-        # Suodata tarkemmin aikavälillä
+        # Suodata tarkemmin aikavälillä ja kameralla
         filtered_images = []
         for img in all_images:
+            if not img or not isinstance(img, dict):
+                continue
             ts = img.get('timestamp')
             if not ts:
                 continue
             try:
                 img_dt = parse_iso_utc(ts)
-                # vertaillaan UTC-aware objekteina
-                if start_dt <= img_dt <= end_dt:
-                    filtered_images.append(img)
+                if not (start_dt <= img_dt <= end_dt):
+                    continue
+                # camera suodatus
+                if camera and camera not in ('', 'All'):
+                    cam = img.get('camera') or extract_camera_from_filename(img.get('filename') or img.get('path') or '')
+                    if cam != camera:
+                        continue
+                filtered_images.append(img)
             except Exception as e:
-                # älä anna yhden virheellisen timestampin kaataa koko pyyntöä
                 logger.debug(f"skip image due to timestamp parse error: {img.get('filename','?')} ts='{ts}' error={e}")
                 continue
 
-        logger.debug(f"filter_by_time_range: filtered {len(filtered_images)} images in range")
+        logger.debug(f"filter_by_time_range: filtered {len(filtered_images)} images in range and camera filter")
         # Jos halutaan tietty aikayksikkö, suodata lisää
         if time_unit != 'all':
-            filtered_images = [img for img in filtered_images
-                               if img.get('category','').startswith(f"{time_unit}_")]
-
+            filtered_images = [img for img in filtered_images 
+                             if img.get('category','').startswith(f"{time_unit}_")]
+        
         return jsonify(filtered_images)
-
+        
     except Exception as e:
         logger.error(f"Virhe aikavälin suodatuksessa: {e}")
         return jsonify([])
+
 if __name__ == '__main__':
     # Varmista että templatit-kansio on olemassa
     template_dir = Path(__file__).parent / 'templates'
     template_dir.mkdir(exist_ok=True)
     
-    # Luo templatit
+    # Luo templatit (korvaa olemassa olevat täydellisillä versioilla)
     create_templates()
     
     logger.info("Käynnistetään sovellus...")

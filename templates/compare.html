@@ -38,6 +38,12 @@
         .slider-handle { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:50px; height:50px; background:#3498db; border-radius:50%; border:4px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.2); display:flex; align-items:center; justify-content:center; color:white; font-weight:bold; }
         .controls { display:flex; gap:15px; justify-content:center; margin-top:20px; }
         .back-btn { background: linear-gradient(135deg,#95a5a6 0%,#7f8c8d 100%); }
+        /* Image modal (lightbox) */
+        .image-modal { display:none; position:fixed; z-index:2000; left:0; top:0; width:100%; height:100%; overflow:auto; background:rgba(0,0,0,0.85); align-items:center; justify-content:center; }
+        .image-modal-content { position:relative; margin:auto; max-width:95%; max-height:95%; background:transparent; padding:20px; text-align:center; color:#fff; }
+        .image-modal-content img { max-width:100%; max-height:80vh; border-radius:8px; border:2px solid #ffffff33; }
+        .image-modal-meta { margin-top:10px; color:#ddd; font-size:14px; }
+        .image-modal .close-btn { position:absolute; top:-10px; right:-10px; background:#e74c3c; color:white; border:none; border-radius:50%; width:40px; height:40px; font-size:20px; cursor:pointer; z-index:2100; }
     </style>
 </head>
 <body>
@@ -60,6 +66,10 @@
                         <label for="beforeEnd">Loppu (valinnainen):</label>
                         <input type="datetime-local" id="beforeEnd" step="60" />
                     </div>
+                    <div class="form-group">
+                        <label for="beforeCamera">Kamerat:</label>
+                        <select id="beforeCamera"><option>All</option></select>
+                    </div>
                     <div style="display:flex; gap:10px; margin-top:10px;">
                         <button onclick="loadBeforeImages()">Hae kuvat valitulta aikaväliltä</button>
                         <button onclick="loadSelectedFromSession()">Valittu istunnosta</button>
@@ -78,6 +88,10 @@
                     <div class="form-group">
                         <label for="afterEnd">Loppu (valinnainen):</label>
                         <input type="datetime-local" id="afterEnd" step="60" />
+                    </div>
+                    <div class="form-group">
+                        <label for="afterCamera">Kamerat:</label>
+                        <select id="afterCamera"><option>All</option></select>
                     </div>
                     <div style="margin-top:10px;">
                         <button onclick="loadAfterImages()">Hae kuvat valitulta aikaväliltä</button>
@@ -136,51 +150,99 @@
         </div>
     </div>
 
+<!-- Image modal / lightbox -->
+<div id="imageModal" class="image-modal" style="display:none; align-items:center;">
+    <div class="image-modal-content">
+        <button class="close-btn" onclick="closeImageModal()">×</button>
+        <img id="modalImage" src="" alt="Kuva" />
+        <div id="modalMeta" class="image-modal-meta"></div>
+    </div>
+</div>
+
     <script>
+        const CLICK_DELAY = 260;
+
         let beforeImages = [];
         let afterImages = [];
         let currentBeforeIndex = 0;
         let currentAfterIndex = 0;
-        let selectedImages = { before: null, after: null };
+        let selectedImages = {
+            before: null,
+            after: null
+        };
 
-        // Apufunktio datetime-local muotoon (YYYY-MM-DDTHH:MM)
         function formatDateTimeLocal(date) {
-            return date.toISOString().slice(0,16);
+            // return local wall-clock string suitable for <input type="datetime-local">
+            const tzOffset = date.getTimezoneOffset() * 60000;
+            return new Date(date.getTime() - tzOffset).toISOString().slice(0,16);
         }
 
-        // Aseta oletusarvot: ennen = eilen sama hetki -> +1h alue, jälkeen = viime tunti
-        function setDefaultDates() {
-            const now = new Date();
-            // BEFORE: eilen sama kellonaika
-            const yesterday = new Date(now.getTime() - 24*60*60*1000);
-            const beforeStart = new Date(yesterday);
-            beforeStart.setMinutes(0,0,0);
-            const beforeEnd = new Date(beforeStart.getTime() + 3600*1000 - 1);
+        function makeSelectableAndZoomable(imgEl, path, filename, date_display, category) {
+            imgEl._clickTimer = null;
 
-            // AFTER: viime tunti
-            const afterEnd = new Date(now);
-            const afterStart = new Date(afterEnd.getTime() - 3600*1000 + 1);
-            afterStart.setMinutes(0,0,0);
+            imgEl.addEventListener('click', function (e) {
+                e.stopPropagation();
+                if (imgEl._clickTimer) clearTimeout(imgEl._clickTimer);
+                imgEl._clickTimer = setTimeout(() => {
+                    imgEl._clickTimer = null;
+                    // single click acts as selecting image for compare grid context
+                    if (imgEl.dataset.for === 'before') {
+                        // find index in beforeImages
+                        const idx = beforeImages.findIndex(x => x.path === path);
+                        if (idx >= 0) {
+                            currentBeforeIndex = idx;
+                            updateBeforeDisplay();
+                        }
+                    } else if (imgEl.dataset.for === 'after') {
+                        const idx = afterImages.findIndex(x => x.path === path);
+                        if (idx >= 0) {
+                            currentAfterIndex = idx;
+                            updateAfterDisplay();
+                        }
+                    } else {
+                        // fallback: set as before selection
+                        beforeImages = [ { path: path, filename: filename, date_display: date_display, category: category, timestamp: '' } ];
+                        currentBeforeIndex = 0;
+                        updateBeforeDisplay();
+                    }
+                }, CLICK_DELAY);
+            });
 
-            document.getElementById('beforeStart').value = formatDateTimeLocal(beforeStart);
-            document.getElementById('beforeEnd').value = formatDateTimeLocal(beforeEnd);
-            document.getElementById('afterStart').value = formatDateTimeLocal(afterStart);
-            document.getElementById('afterEnd').value = formatDateTimeLocal(afterEnd);
+            imgEl.addEventListener('dblclick', function (e) {
+                e.stopPropagation();
+                if (imgEl._clickTimer) { clearTimeout(imgEl._clickTimer); imgEl._clickTimer = null; }
+                openImageModal(path, filename, date_display, category);
+            });
+
+            imgEl.addEventListener('mousedown', function(e){ e.stopPropagation(); });
         }
 
-        // Helper: muunna datetime-local string selaimesta ISO UTC -muotoon
-        function toIsoOrNull(local) {
-            if (!local) return null;
-            const d = new Date(local);
-            return d.toISOString();
+        async function populateCompareCameras() {
+            try {
+                const res = await fetch('/api/cameras');
+                const cams = await res.json();
+                const b = document.getElementById('beforeCamera');
+                const a = document.getElementById('afterCamera');
+                b.innerHTML = ''; a.innerHTML = '';
+                cams.forEach(c => {
+                    const opt1 = document.createElement('option');
+                    opt1.value = c; opt1.textContent = (c==='All') ? 'Kaikki kamerat' : c;
+                    b.appendChild(opt1);
+                    const opt2 = opt1.cloneNode(true);
+                    a.appendChild(opt2);
+                });
+            } catch (e) { console.warn('pop cameras failed', e); }
         }
 
-        // Hae vanhemmat kuvat aikaväliltä (käyttäjän antama start..end)
         async function loadBeforeImages() {
             const startLocal = document.getElementById('beforeStart').value;
             const endLocal = document.getElementById('beforeEnd').value;
+            const camera = document.getElementById('beforeCamera').value || 'All';
 
-            if (!startLocal) { alert('Valitse aloitusaika ennen-kuville'); return; }
+            if (!startLocal) {
+                alert('Valitse päivämäärä ja aika ensin');
+                return;
+            }
 
             try {
                 const start = new Date(startLocal);
@@ -188,19 +250,18 @@
                 if (endLocal) {
                     end = new Date(endLocal);
                 } else {
-                    // jos loppua ei annettu, laajennetaan yhteen tuntiin (alkaen tunnin alusta)
                     const tmp = new Date(start);
                     tmp.setMinutes(0,0,0);
                     end = new Date(tmp.getTime() + 3600*1000 - 1);
                 }
 
-                const startIso = encodeURIComponent(start.toISOString());
-                const endIso = encodeURIComponent(end.toISOString());
+                const startIso = start.toISOString();
+                const endIso = end.toISOString();
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                const response = await fetch(`/api/filter_by_time_range?start_datetime=${encodeURIComponent(startIso)}&end_datetime=${encodeURIComponent(endIso)}&camera=${encodeURIComponent(camera)}`);
                 const images = await response.json();
 
-                beforeImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                beforeImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentBeforeIndex = 0;
 
                 if (beforeImages.length === 0) {
@@ -211,18 +272,21 @@
 
                 updateBeforeDisplay();
                 populateImageGrid('beforeGrid', beforeImages, 'before');
-            } catch (err) {
-                console.error(err);
-                alert('Virhe kuvien haussa ennen-kuville');
+            } catch (error) {
+                console.error('Error loading before images:', error);
+                alert('Virhe kuvien haussa');
             }
         }
 
-        // Hae uudemmat kuvat aikaväliltä
         async function loadAfterImages() {
             const startLocal = document.getElementById('afterStart').value;
             const endLocal = document.getElementById('afterEnd').value;
+            const camera = document.getElementById('afterCamera').value || 'All';
 
-            if (!startLocal) { alert('Valitse aloitusaika jälkeen-kuville'); return; }
+            if (!startLocal) {
+                alert('Valitse päivämäärä ja aika ensin');
+                return;
+            }
 
             try {
                 const start = new Date(startLocal);
@@ -235,13 +299,13 @@
                     end = new Date(tmp.getTime() + 3600*1000 - 1);
                 }
 
-                const startIso = encodeURIComponent(start.toISOString());
-                const endIso = encodeURIComponent(end.toISOString());
+                const startIso = start.toISOString();
+                const endIso = end.toISOString();
 
-                const response = await fetch(`/api/filter_by_time_range?start_datetime=${startIso}&end_datetime=${endIso}`);
+                const response = await fetch(`/api/filter_by_time_range?start_datetime=${encodeURIComponent(startIso)}&end_datetime=${encodeURIComponent(endIso)}&camera=${encodeURIComponent(camera)}`);
                 const images = await response.json();
 
-                afterImages = images.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                afterImages = images.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
                 currentAfterIndex = 0;
 
                 if (afterImages.length === 0) {
@@ -252,51 +316,70 @@
 
                 updateAfterDisplay();
                 populateImageGrid('afterGrid', afterImages, 'after');
-            } catch (err) {
-                console.error(err);
-                alert('Virhe kuvien haussa jälkeen-kuville');
+            } catch (error) {
+                console.error('Error loading after images:', error);
+                alert('Virhe kuvien haussa');
             }
         }
 
-        // Näytön päivitysfunktiot (sama logiikka kuin aiemmin)
         function updateBeforeDisplay() {
             const counter = document.getElementById('beforeCounter');
             const preview = document.getElementById('beforePreview');
+            
             counter.textContent = `${currentBeforeIndex + 1}/${beforeImages.length}`;
+            
             if (beforeImages.length > 0) {
                 const image = beforeImages[currentBeforeIndex];
-                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
+                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}" data-path="${image.path}" data-filename="${image.filename}" data-date="${image.date_display || ''}" data-category="${image.category || ''}">`;
                 selectedImages.before = image;
+
+                const prevImg = preview.querySelector('img');
+                if (prevImg) {
+                    prevImg.dataset.for = 'before';
+                    makeSelectableAndZoomable(prevImg, prevImg.dataset.path, prevImg.dataset.filename, prevImg.dataset.date, prevImg.dataset.category);
+                }
             } else {
                 preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
                 selectedImages.before = null;
             }
+            
             updateCompareButton();
         }
 
         function updateAfterDisplay() {
             const counter = document.getElementById('afterCounter');
             const preview = document.getElementById('afterPreview');
+            
             counter.textContent = `${currentAfterIndex + 1}/${afterImages.length}`;
+            
             if (afterImages.length > 0) {
                 const image = afterImages[currentAfterIndex];
-                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}">`;
+                preview.innerHTML = `<img src="/images/${image.path}" alt="${image.filename}" data-path="${image.path}" data-filename="${image.filename}" data-date="${image.date_display || ''}" data-category="${image.category || ''}">`;
                 selectedImages.after = image;
+
+                const prevImg = preview.querySelector('img');
+                if (prevImg) {
+                    prevImg.dataset.for = 'after';
+                    makeSelectableAndZoomable(prevImg, prevImg.dataset.path, prevImg.dataset.filename, prevImg.dataset.date, prevImg.dataset.category);
+                }
             } else {
                 preview.innerHTML = '<div style="color: #7f8c8d;">Ei kuvia</div>';
                 selectedImages.after = null;
             }
+            
             updateCompareButton();
         }
 
         function scrollBeforeImage(direction) {
             if (beforeImages.length === 0) return;
+            
             currentBeforeIndex = (currentBeforeIndex + direction + beforeImages.length) % beforeImages.length;
             updateBeforeDisplay();
         }
 
         function scrollAfterImage(direction) {
             if (afterImages.length === 0) return;
+            
             currentAfterIndex = (currentAfterIndex + direction + afterImages.length) % afterImages.length;
             updateAfterDisplay();
         }
@@ -304,21 +387,30 @@
         function populateImageGrid(gridId, images, type) {
             const grid = document.getElementById(gridId);
             grid.innerHTML = '';
+
             images.forEach((image, index) => {
                 const img = document.createElement('img');
                 img.src = `/images/${image.path}`;
                 img.className = 'grid-image';
                 img.title = `${image.filename}\n${image.date_display}`;
+                img.dataset.path = image.path;
+                img.dataset.filename = image.filename;
+                img.dataset.date = image.date_display || '';
+                img.dataset.category = image.category || '';
+                img.dataset.for = type;
                 img.onerror = function() { this.style.display = 'none'; };
+                
                 img.addEventListener('click', () => {
-                    if (type === 'before') {
-                        currentBeforeIndex = index;
-                        updateBeforeDisplay();
-                    } else {
-                        currentAfterIndex = index;
-                        updateAfterDisplay();
-                    }
+                    // click handled by makeSelectableAndZoomable (which also schedules)
                 });
+                
+                img.addEventListener('dblclick', (e) => {
+                    // dblclick handled by makeSelectableAndZoomable
+                    e.stopPropagation();
+                });
+
+                makeSelectableAndZoomable(img, image.path, image.filename, image.date_display || '', image.category || '');
+
                 grid.appendChild(img);
             });
         }
@@ -330,9 +422,11 @@
 
         function startComparison() {
             if (!selectedImages.before || !selectedImages.after) return;
+
             document.getElementById('beforeImage').src = `/images/${selectedImages.before.path}`;
             document.getElementById('afterImage').src = `/images/${selectedImages.after.path}`;
             document.getElementById('comparisonContainer').style.display = 'block';
+
             initSlider();
         }
 
@@ -343,6 +437,7 @@
             currentAfterIndex = 0;
             selectedImages.before = null;
             selectedImages.after = null;
+            
             document.getElementById('beforePreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
             document.getElementById('afterPreview').innerHTML = '<div style="color: #7f8c8d;">Valitse kuva</div>';
             document.getElementById('beforeCounter').textContent = '0/0';
@@ -350,6 +445,7 @@
             document.getElementById('beforeGrid').innerHTML = '';
             document.getElementById('afterGrid').innerHTML = '';
             document.getElementById('comparisonContainer').style.display = 'none';
+            
             updateCompareButton();
         }
 
@@ -359,6 +455,7 @@
             const handle = document.querySelector('.slider-handle');
             const afterImage = document.querySelector('.image-after');
             let isDragging = false;
+
             function updateSliderPosition(clientX) {
                 const container = document.querySelector('.comparison-container');
                 const rect = container.getBoundingClientRect();
@@ -368,22 +465,44 @@
                 sliderBar.style.left = `${percentage}%`;
                 handle.style.left = `${percentage}%`;
             }
+
             sliderContainer.addEventListener('pointerdown', function(e) {
                 isDragging = true;
                 sliderContainer.setPointerCapture(e.pointerId);
                 updateSliderPosition(e.clientX);
             });
+
             sliderContainer.addEventListener('pointermove', function(e) {
                 if (!isDragging) return;
                 updateSliderPosition(e.clientX);
             });
+
             sliderContainer.addEventListener('pointerup', function(e) {
                 isDragging = false;
                 try { sliderContainer.releasePointerCapture(e.pointerId); } catch (err) {}
             });
         }
 
-        // Lataa istunnosta valittu kuva ja aseta before-kuvaksi
+        function openImageModal(path, filename, date_display, category) {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            const meta = document.getElementById('modalMeta');
+            modalImg.src = `/images/${path}`;
+            meta.innerHTML = `<div><strong>${filename || ''}</strong></div><div>${date_display || ''}</div><div>${category || ''}</div>`;
+            modal.style.display = 'flex';
+            document.addEventListener('keydown', _imageModalKeyHandler);
+        }
+        function closeImageModal() {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modalImg.src = '';
+            modal.style.display = 'none';
+            document.removeEventListener('keydown', _imageModalKeyHandler);
+        }
+        function _imageModalKeyHandler(e) {
+            if (e.key === 'Escape') closeImageModal();
+        }
+
         function loadSelectedFromSession() {
             const sel = sessionStorage.getItem('selectedImage');
             if (!sel) { alert('Ei valittua kuvaa istunnossa'); return; }
@@ -402,7 +521,18 @@
 
         document.addEventListener('DOMContentLoaded', function() {
             setDefaultDates();
+            populateCompareCameras();
         });
+
+        function setDefaultDates() {
+            const today = new Date();
+            const yesterday = new Date(today.getTime() - 24*60*60*1000);
+            
+            document.getElementById('beforeStart').value = formatDateTimeLocal(yesterday);
+            document.getElementById('beforeEnd').value = formatDateTimeLocal(yesterday);
+            document.getElementById('afterStart').value = formatDateTimeLocal(today);
+            document.getElementById('afterEnd').value = formatDateTimeLocal(today);
+        }
     </script>
 </body>
 </html>
