@@ -1957,14 +1957,25 @@ def count_images_in_folder(folder_path):
 def extract_camera_from_filename(name):
     """
     Palauttaa kameran nimen kuvatiedoston nimestä.
+    
+    Args:
+        name (str): Tiedoston nimi tai polku
+        
+    Returns:
+        str: Kameran nimi tai tyhjä merkkijono jos ei voida tunnistaa
+        
     Etsii ensin timestamp-muotoisen segmentin ('-<digits>.<digits>') ja palauttaa kaiken
     sitä edeltävän osan. Tämä käsittelee kameranimiä, joissa voi olla '-',
     esim. '2-Ovi-1762371760.378526-b2yisl.jpg' -> '2-Ovi'
     Fallback: jos timestampia ei löydy, ottaa osan ennen ensimmäistä '-'.
     """
-    if not name:
+    # Type validation: reject None and non-string types to prevent errors in subsequent operations
+    if not name or not isinstance(name, str):
         return ''
+    
     base = os.path.basename(name)
+    if not base:
+        return ''
 
     import re
     # etsi pattern: '-' followed by digits, a dot, then digits (esim. -1762371760.378526)
@@ -1972,9 +1983,13 @@ def extract_camera_from_filename(name):
     if m:
         cam = base[:m.start()]
         return cam.strip()
+    
+    # Fallback: ota osa ennen ensimmäistä '-'
     idx = base.find('-')
     if idx > 0:
         return base[:idx].strip()
+    
+    # Jos ei '-' merkkiä, palauta tyhjä (todennäköisesti ei kamerakuva)
     return ''
 
 @app.route('/api/cameras')
@@ -2135,7 +2150,7 @@ def browse_path():
         
     except Exception as e:
         logger.error(f"Virhe polun selaamisessa: {e}")
-        return jsonify({'error': str(e)})
+        return jsonify({'error': 'Virhe polun selaamisessa'})
 
 @app.route('/api/time_units')
 def get_time_units():
@@ -2279,7 +2294,8 @@ def debug_info():
             }
         })
     except Exception as e:
-        return jsonify({'error': str(e)})
+        logger.error(f"Virhe debug-tietojen haussa: {e}")
+        return jsonify({'error': 'Virhe debug-tietojen haussa'})
 
 @app.route('/api/debug_compare')
 def debug_compare():
@@ -2317,7 +2333,8 @@ def debug_compare():
             'all_categories': DB.get_categories()[:10] if DB and hasattr(DB, 'get_categories') else []
         })
     except Exception as e:
-        return jsonify({'error': str(e)})
+        logger.error(f"Virhe debug_compare: {e}")
+        return jsonify({'error': 'Virhe debug-tietojen haussa'})
 
 @app.route('/api/rescan')
 def rescan_images():
@@ -2483,11 +2500,19 @@ def api_rtsp_start():
         url = data.get('url')
         if not url:
             return jsonify({'error': 'no url provided'}), 400
+        # Validate URL before passing to rtsp_manager
+        if not isinstance(url, str) or not url.startswith(('rtsp://', 'rtsps://')):
+            return jsonify({'error': 'invalid RTSP URL format'}), 400
         result = start_rtsp_to_hls(url)
         return jsonify(result)
+    except ValueError as e:
+        logger.warning(f"Invalid RTSP URL: {e}")
+        # Don't expose internal error details
+        return jsonify({'error': 'Invalid RTSP URL'}), 400
     except Exception as e:
         logger.error(f"Virhe RTSP startissa: {e}")
-        return jsonify({'error': str(e)}), 500
+        # Don't expose internal error details
+        return jsonify({'error': 'Virhe RTSP-streamin käynnistyksessä'}), 500
 
 @app.route('/api/rtsp/stop', methods=['POST'])
 def api_rtsp_stop():
@@ -2507,13 +2532,18 @@ def api_rtsp_stop():
         return jsonify(res)
     except Exception as e:
         logger.error(f"Virhe RTSP stopissa: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': 'Virhe RTSP-streamin pysäytyksessä'}), 500
 
 @app.route('/images/<path:filename>')
 def serve_image(filename):
     """Palvele kuvia"""
     try:
-        return send_from_directory('/data/classified', filename)
+        # Prevent path traversal attacks
+        safe_filename = os.path.normpath(filename).lstrip('/')
+        if '..' in safe_filename or safe_filename.startswith('/'):
+            logger.warning(f"Potential path traversal attempt blocked: {filename}")
+            return "Virheellinen polku", 400
+        return send_from_directory('/data/classified', safe_filename)
     except Exception as e:
         logger.error(f"Virhe kuvan palvelussa: {e}")
         return "Kuvaa ei löytynyt", 404
@@ -2541,6 +2571,12 @@ def filter_by_time_range():
         camera = request.args.get('camera', '')  # 'All' tai tyhjä tarkoittaa kaikkia
 
         if not start_datetime or not end_datetime:
+            return jsonify([])
+        
+        # Validate time_unit to prevent injection
+        valid_time_units = {'all', 'year', 'month', 'week', 'day', 'hour', 'minute', 'second'}
+        if time_unit not in valid_time_units:
+            logger.warning(f"Invalid time_unit parameter: {time_unit}")
             return jsonify([])
         
         # Parsitaan ja normalisoidaan UTC-aware

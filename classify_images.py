@@ -6,6 +6,12 @@ import hashlib
 from PIL import Image
 from PIL.ExifTags import TAGS
 
+# EXIF tag IDs for date/time information
+# Using standard EXIF tag IDs as defined in EXIF specification
+EXIF_DATETIME_ORIGINAL = 36867  # DateTimeOriginal: when photo was taken
+EXIF_DATETIME_DIGITIZED = 36868  # DateTimeDigitized: when photo was digitized
+EXIF_DATETIME = 306  # DateTime: file modification date/time
+
 def get_image_hash(file_path):
     try:
         hash_md5 = hashlib.md5()
@@ -22,9 +28,11 @@ def get_week_number(date):
 
 def get_exif_date(image):
     try:
-        exif_data = image._getexif()
+        # Use getexif() instead of deprecated _getexif()
+        exif_data = image.getexif()
         if exif_data:
-            date_tags = [36867, 36868, 306]
+            # Try date tags in order of preference
+            date_tags = [EXIF_DATETIME_ORIGINAL, EXIF_DATETIME_DIGITIZED, EXIF_DATETIME]
             for tag_id in date_tags:
                 if tag_id in exif_data:
                     date_str = exif_data[tag_id]
@@ -46,10 +54,19 @@ def get_image_metadata_date(file_path):
             if exif_date:
                 return exif_date, 'exif'
             try:
-                if hasattr(img, '_getexif') and img._getexif():
-                    for tag_id, value in img._getexif().items():
-                        tag_name = TAGS.get(tag_id, tag_id)
-                        if 'date' in tag_name.lower() or 'time' in tag_name.lower():
+                # Use getexif() instead of deprecated _getexif()
+                exif_data = img.getexif()
+                if exif_data:
+                    # Whitelist of known date/time EXIF tag names to avoid false positives
+                    date_time_tags = {
+                        'DateTime', 'DateTimeOriginal', 'DateTimeDigitized',
+                        'GPSDateStamp', 'GPSTimeStamp', 'SubSecTime',
+                        'SubSecTimeOriginal', 'SubSecTimeDigitized'
+                    }
+                    for tag_id, value in exif_data.items():
+                        tag_name = TAGS.get(tag_id, '')
+                        # Use whitelist instead of substring matching to avoid false positives
+                        if isinstance(tag_name, str) and tag_name in date_time_tags:
                             if isinstance(value, str) and len(value) > 8:
                                 try:
                                     parsed_date = datetime.strptime(value, '%Y:%m:%d %H:%M:%S')
