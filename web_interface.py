@@ -553,6 +553,19 @@ def create_templates():
                 <label for="timelapseCamera">Kamera:</label>
                 <select id="timelapseCamera"><option value="All">Kaikki kamerat</option></select>
             </div>
+
+            <div class="form-group">
+                <label for="timelapseInterval">Interval (näytä yksi kuva per):</label>
+                <select id="timelapseInterval">
+                    <option value="none">Kaikki kuvat</option>
+                    <option value="month">Kuukausi</option>
+                    <option value="week">Viikko</option>
+                    <option value="day">Päivä</option>
+                    <option value="hour">Tunti</option>
+                    <option value="minute">Minuutti</option>
+                    <option value="second">Sekunti</option>
+                </select>
+            </div>
             
             <div class="speed-control">
                 <label>Nopeus:</label>
@@ -1135,7 +1148,7 @@ def create_templates():
         }
     }
 
-    // Timelapse-toiminnot
+    // Timelapse-toiminnot (grouping added)
     function openTimelapseModal() {
         document.getElementById('timelapseModal').style.display = 'flex';
         // Aseta oletusarvot
@@ -1157,11 +1170,77 @@ def create_templates():
         stopTimelapse();
     }
 
-    // Lataa timelapse-kuvat
+    // GROUPING HELPERS for timelapse interval selection
+    function getISOWeek(dt) {
+        // dt is Date
+        const date = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
+        // Thursday in current week decides the year
+        date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay()||7));
+        const yearStart = new Date(Date.UTC(date.getUTCFullYear(),0,1));
+        const weekNo = Math.ceil((( (date - yearStart) / 86400000) + 1)/7);
+        return {year: date.getUTCFullYear(), week: weekNo};
+    }
+
+    function groupImagesByInterval(images, interval) {
+        // images: array of objects with .timestamp (ISO) and .path etc.
+        // interval: 'month','week','day','hour','minute','second' or 'none'
+        if (!interval || interval === 'none') return images;
+
+        const groups = new Map();
+        images.forEach(img => {
+            if (!img || !img.timestamp) return;
+            const d = new Date(img.timestamp);
+            if (isNaN(d.getTime())) return;
+            let key;
+            switch(interval) {
+                case 'month':
+                    // YYYY-MM
+                    key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+                    break;
+                case 'week': {
+                    const wk = getISOWeek(d);
+                    key = `${wk.year}-W${String(wk.week).padStart(2,'0')}`;
+                    break;
+                }
+                case 'day':
+                    key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}`;
+                    break;
+                case 'hour':
+                    key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}T${String(d.getUTCHours()).padStart(2,'0')}`;
+                    break;
+                case 'minute':
+                    key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}T${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+                    break;
+                case 'second':
+                    key = `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,'0')}-${String(d.getUTCDate()).padStart(2,'0')}T${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}`;
+                    break;
+                default:
+                    key = d.toISOString();
+            }
+            if (!groups.has(key)) {
+                groups.set(key, []);
+            }
+            groups.get(key).push(img);
+        });
+
+        // Choose representative image per group (first chronologically)
+        const selected = [];
+        for (const [k, bucket] of groups.entries()) {
+            // sort bucket by timestamp ascending to get first
+            bucket.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+            selected.push(bucket[0]);
+        }
+        // sort selected by timestamp
+        selected.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+        return selected;
+    }
+
+    // Lataa timelapse-kuvat (modified to apply grouping interval)
     async function loadTimelapseImages() {
         const startLocal = document.getElementById('timelapseStartDatetime').value;
         const endLocal = document.getElementById('timelapseEndDatetime').value;
         const camera = document.getElementById('timelapseCamera') ? document.getElementById('timelapseCamera').value : (document.getElementById('cameraSelect') ? document.getElementById('cameraSelect').value : 'All');
+        const interval = document.getElementById('timelapseInterval') ? document.getElementById('timelapseInterval').value : 'none';
 
         if (!startLocal || !endLocal) {
             alert('Valitse alkuaika ja loppuaika timelapsea varten!');
@@ -1179,7 +1258,13 @@ def create_templates():
 
             images = images.filter(img => img && img.timestamp).sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-            timelapseImages = images;
+            // Apply grouping according to selected interval
+            let grouped = images;
+            if (interval && interval !== 'none') {
+                grouped = groupImagesByInterval(images, interval);
+            }
+
+            timelapseImages = grouped;
 
             if (timelapseImages.length === 0) {
                 document.getElementById('timelapseStats').innerHTML = 
