@@ -26,6 +26,10 @@ class ImageDatabase:
         except Exception as e:
             print(f"Virhe tietokannan tallennuksessa: {e}")
     
+    def reload_database(self):
+        """Lataa tietokanta uudelleen levyltä"""
+        self.images = self.load_database()
+    
     def add_image(self, image_path, timestamp, category, source='filesystem'):
         try:
             # Käytä suhteellista polkua
