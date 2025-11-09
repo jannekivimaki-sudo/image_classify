@@ -2093,6 +2093,10 @@ def get_categories():
 def browse_path():
     """Selaa polkua hierarkkista navigointia varten"""
     try:
+        # Lataa tietokanta uudelleen varmistaaksemme että meillä on uusimmat tiedot
+        if DB:
+            DB.reload_database()
+        
         path = request.args.get('path', '')
         logger.info(f"Browse request for path: '{path}'")
         
@@ -2361,6 +2365,10 @@ def get_images():
     try:
         if not CLASSIFICATION_AVAILABLE:
             return jsonify([])
+        
+        # Lataa tietokanta uudelleen varmistaaksemme että meillä on uusimmat tiedot
+        if DB:
+            DB.reload_database()
             
         start_date = request.args.get('start_date', '')
         end_date = request.args.get('end_date', '')
@@ -2534,6 +2542,10 @@ def filter_by_time_range():
     try:
         if not CLASSIFICATION_AVAILABLE:
             return jsonify([])
+        
+        # Lataa tietokanta uudelleen varmistaaksemme että meillä on uusimmat tiedot
+        if DB:
+            DB.reload_database()
             
         start_datetime = request.args.get('start_datetime', '')
         end_datetime = request.args.get('end_datetime', '')
