@@ -14,13 +14,12 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY . /app
 
+# Tee skriptit ajettaviksi
+RUN chmod +x /app/start_services.sh /app/auto_classify_service.py
+
 ENV FLASK_ENV=production
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 5000
-
-# Kopioi käynnistysscripti ja tee siitä ajettava
-COPY start_services.sh /app/start_services.sh
-RUN chmod +x /app/start_services.sh /app/auto_classify_service.py
 
 CMD ["/app/start_services.sh"]
